@@ -1,4 +1,6 @@
 import discord
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from discord import app_commands, ui
 from discord.ext import commands, tasks
 import os
@@ -5558,4 +5560,18 @@ async def slash_roulette_top(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *args):
+        pass  # suppress logs
+
+def _run_health_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    server.serve_forever()
+
+threading.Thread(target=_run_health_server, daemon=True).start()
 bot.run(os.getenv("DISCORD_TOKEN"))

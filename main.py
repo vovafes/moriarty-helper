@@ -12,7 +12,6 @@ import aiohttp
 from dotenv import load_dotenv
 from datetime import datetime
 from pymongo import MongoClient
-h
 load_dotenv()
 
 # ─────────────────────────────────────────────

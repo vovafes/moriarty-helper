@@ -12,7 +12,7 @@ import aiohttp
 from dotenv import load_dotenv
 from datetime import datetime
 from pymongo import MongoClient
-
+h
 load_dotenv()
 
 # ─────────────────────────────────────────────
@@ -3561,12 +3561,17 @@ async def on_ready():
     if not update_stats.is_running():
         update_stats.start()
     if not voice_reward_loop.is_running():
-        voice_reward_loop.start()
+                voice_reward_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
     for gid in list(roster_settings.keys()):
         guild = bot.get_guild(gid)
         if guild:
             await _refresh_roster(guild)
+
+    # Подключение к голосовому каналу при старте
+    vc_channel = bot.get_channel(1402817552584802354)
+    if vc_channel and isinstance(vc_channel, discord.VoiceChannel):
+                await vc_channel.connect()
 
 
 # ─────────────────────────────────────────────

@@ -211,6 +211,9 @@ obshak_log_channels: dict = {}
 # { guild_id: role_id }  — роль для тега в логах общака
 obshak_ping_roles: dict = {}
 
+# { guild_id: channel_id }  — голосовой канал для автоподключения при старте
+voice_autoconnect: dict = {}
+
 # { guild_id: [ { "user_id": int, "amount": int, "date": str (ISO) } ] }
 obshak_deposits: dict = {}
 
@@ -577,6 +580,7 @@ def save_data():
             "vzp_roles2":           {str(g): v for g, v in vzp_roles2.items()},
             "mp_roles2":            {str(g): v for g, v in mp_roles2.items()},
             "list_roles2":          {str(g): v for g, v in list_roles2.items()},
+            "voice_autoconnect":    {str(g): v for g, v in voice_autoconnect.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -696,6 +700,8 @@ def load_data():
             mp_roles2[int(g)] = v
         for g, v in data.get("list_roles2", {}).items():
             list_roles2[int(g)] = v
+        for g, v in data.get("voice_autoconnect", {}).items():
+            voice_autoconnect[int(g)] = v
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -3800,10 +3806,14 @@ async def on_ready():
         if guild:
             await _refresh_roster(guild)
 
-    # Подключение к голосовому каналу при старте
-    vc_channel = bot.get_channel(1402817552584802354)
-    if vc_channel and isinstance(vc_channel, discord.VoiceChannel):
-                await vc_channel.connect()
+    # Подключение к голосовым каналам при старте
+    for gid, ch_id in list(voice_autoconnect.items()):
+        try:
+            ch = bot.get_channel(ch_id)
+            if ch and isinstance(ch, discord.VoiceChannel):
+                await ch.connect()
+        except Exception as e:
+            print(f"WARNING: Could not auto-connect to voice channel {ch_id}: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -4694,6 +4704,23 @@ async def slash_voice_amount(interaction: discord.Interaction, сумма: int):
     save_data()
     await interaction.response.send_message(
         f"✅ Начисление: **{сумма}** 💎 в минуту за активность в войсе.", ephemeral=True
+    )
+
+
+@tree.command(name="войс_авто", description="Установить голосовой канал для автоподключения бота при старте (пусто — отключить)")
+@app_commands.describe(канал="Голосовой канал для автоподключения (не указывать — сбросить)")
+async def slash_voice_autoconnect(interaction: discord.Interaction, канал: discord.VoiceChannel = None):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    gid = interaction.guild_id
+    if канал is None:
+        voice_autoconnect.pop(gid, None)
+        save_data()
+        return await interaction.response.send_message("✅ Автоподключение к войсу отключено.", ephemeral=True)
+    voice_autoconnect[gid] = канал.id
+    save_data()
+    await interaction.response.send_message(
+        f"✅ Бот будет автоматически подключаться к **{канал.name}** при запуске.", ephemeral=True
     )
 
 

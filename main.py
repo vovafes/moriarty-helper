@@ -201,6 +201,18 @@ voice_minutes: dict = {}
 # { guild_id: { user_id: datetime } }  — время входа в канал (in-memory, не сохраняется)
 voice_join_times: dict = {}
 
+# ⚔️ ВЗП МОНИТОРИНГ
+# { guild_id: { "familyId", "familyName", "serverId", "alertChannelId",
+#               "resultsChannelId", "mentionRoles", "mentionUsers",
+#               "pollInterval", "monitoringEnabled" } }
+vzp_monitor_config: dict = {}
+
+# { guild_id: { event_id: "notified" | "completed" } }
+vzp_processed_events: dict = {}
+
+# { guild_id: float } — timestamp последней проверки
+vzp_last_check: dict = {}
+
 # 💰 ОБЩАК
 # { guild_id: { "channel_id": int, "message_id": int, "text": str|None, "image_url": str|None } }
 obshak_panels: dict = {}
@@ -581,6 +593,8 @@ def save_data():
             "mp_roles2":            {str(g): v for g, v in mp_roles2.items()},
             "list_roles2":          {str(g): v for g, v in list_roles2.items()},
             "voice_autoconnect":    {str(g): v for g, v in voice_autoconnect.items()},
+            "vzp_monitor_config":   {str(g): v for g, v in vzp_monitor_config.items()},
+            "vzp_processed_events": {str(g): v for g, v in vzp_processed_events.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -702,6 +716,10 @@ def load_data():
             list_roles2[int(g)] = v
         for g, v in data.get("voice_autoconnect", {}).items():
             voice_autoconnect[int(g)] = v
+        for g, v in data.get("vzp_monitor_config", {}).items():
+            vzp_monitor_config[int(g)] = v
+        for g, v in data.get("vzp_processed_events", {}).items():
+            vzp_processed_events[int(g)] = v
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -3791,6 +3809,8 @@ async def on_ready():
     for message_id in event_lists:
         bot.add_view(ThreadListView(message_id))
     await tree.sync()
+    if not vzp_monitor_loop.is_running():
+        vzp_monitor_loop.start()
     print(f"Bot online: {bot.user} (ID: {bot.user.id})")
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.watching,
@@ -5827,6 +5847,539 @@ async def slash_roulette_top(interaction: discord.Interaction):
     embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))
     await interaction.response.send_message(embed=embed)
 
+
+# ═══════════════════════════════════════════════════════════
+# ⚔️  ВЗП МОНИТОРИНГ — войны семей GTA5RP (vzp-gta5rp.com)
+# ═══════════════════════════════════════════════════════════
+
+VZP_API = "https://vzp-gta5rp.com/api"
+
+
+async def _vzp_get(session: aiohttp.ClientSession, path: str, **params):
+    try:
+        async with session.get(
+            f"{VZP_API}{path}", params=params or None,
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as r:
+            if r.status == 200:
+                return await r.json(content_type=None)
+    except Exception as e:
+        print(f"VZP API error {path}: {e}")
+    return None
+
+
+def _vzp_unwrap(data):
+    """Разворачивает обёртку {"data": [...]} если есть."""
+    if isinstance(data, dict):
+        for key in ("data", "items", "history", "organizations"):
+            if key in data:
+                return data[key]
+    return data
+
+
+def _vzp_mentions(guild_id: int) -> str:
+    cfg = vzp_monitor_config.get(guild_id, {})
+    parts = [f"<@&{r}>" for r in cfg.get("mentionRoles", [])]
+    parts += [f"<@{u}>" for u in cfg.get("mentionUsers", [])]
+    return " ".join(parts)
+
+
+def _duration_str(start_ts, end_ts) -> str:
+    try:
+        secs = int(end_ts) - int(start_ts)
+        m, s = divmod(abs(secs), 60)
+        return f"{m}м {s}с"
+    except Exception:
+        return "—"
+
+
+def _player_table(players: list) -> str:
+    if not players:
+        return "```нет данных```"
+    header = f"{'Игрок':<20} {'K':>4} {'DMG':>7} {'HIT%':>5} {'HS%':>5}"
+    sep = "─" * len(header)
+    rows = [header, sep]
+    for p in sorted(players, key=lambda x: x.get("kills", 0), reverse=True):
+        name = str(p.get("characterName") or p.get("name") or "?")[:20]
+        k    = p.get("kills", 0)
+        dmg  = p.get("damage", 0)
+        hit  = f"{p.get('hitPercent', 0):.1f}"
+        hs   = f"{p.get('hsPercent', 0):.1f}"
+        rows.append(f"{name:<20} {k:>4} {dmg:>7} {hit:>5} {hs:>5}")
+    return "```\n" + "\n".join(rows) + "\n```"
+
+
+async def _send_war_started(guild_id: int, event: dict):
+    cfg = vzp_monitor_config.get(guild_id)
+    if not cfg:
+        return
+    ch = bot.get_channel(cfg["alertChannelId"])
+    if not ch:
+        return
+
+    family_id = cfg["familyId"]
+    atk = event.get("attackerOrganization") or {}
+    def_ = event.get("defenderOrganization") or {}
+    our_side = "ATK ⚔️" if atk.get("id") == family_id else "DEF 🛡️"
+    opponent = def_.get("name", "?") if atk.get("id") == family_id else atk.get("name", "?")
+
+    ts = event.get("startedAt")
+    ts_str = f"<t:{int(ts)}:T>" if ts else "—"
+
+    embed = discord.Embed(
+        title=f"⚔️ ВОЙНА НАЧАЛАСЬ — {event.get('pointName', '?')}",
+        color=0xFF8C00,
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Наша роль",     value=our_side,                        inline=True)
+    embed.add_field(name="Противник",     value=opponent,                        inline=True)
+    embed.add_field(name="Карта",         value=event.get("mapName", "?"),       inline=True)
+    embed.add_field(name="Макс. игроков", value=str(event.get("maxPlayers","?")),inline=True)
+    embed.add_field(name="Начало",        value=ts_str,                          inline=True)
+    embed.set_footer(text="vzp-gta5rp.com")
+
+    mention = _vzp_mentions(guild_id)
+    await ch.send(content=mention or None, embed=embed)
+
+
+async def _send_war_result(guild_id: int, event: dict):
+    cfg = vzp_monitor_config.get(guild_id)
+    if not cfg:
+        return
+    ch = bot.get_channel(cfg["resultsChannelId"])
+    if not ch:
+        return
+
+    family_id = cfg["familyId"]
+    atk    = event.get("attackerOrganization") or {}
+    def_   = event.get("defenderOrganization") or {}
+    winner = event.get("winnerOrganization")   or {}
+
+    we_won = (winner.get("id") == family_id)
+    color  = 0x57F287 if we_won else 0xED4245
+    title  = ("✅ ПОБЕДА" if we_won else "❌ ПОРАЖЕНИЕ") + f" — {event.get('pointName','?')}"
+
+    start_ts = event.get("startedAt")
+    end_ts   = event.get("endedAt")
+    duration = _duration_str(start_ts, end_ts)
+    start_str = f"<t:{int(start_ts)}:t>" if start_ts else "—"
+    end_str   = f"<t:{int(end_ts)}:t>"   if end_ts   else "—"
+
+    embed = discord.Embed(title=title, color=color, timestamp=datetime.now())
+    embed.add_field(name="Атака",      value=atk.get("name","?"),    inline=True)
+    embed.add_field(name="Защита",     value=def_.get("name","?"),   inline=True)
+    embed.add_field(name="Победитель", value=winner.get("name","?"), inline=True)
+    embed.add_field(name="Длительность", value=duration,             inline=True)
+
+    atk_players = event.get("attackerPlayers") or []
+    def_players = event.get("defenderPlayers") or []
+    our_players  = atk_players if atk.get("id") == family_id else def_players
+    enemy_players = def_players if atk.get("id") == family_id else atk_players
+
+    def _s(lst, key): return sum(p.get(key, 0) for p in lst)
+
+    our_label   = f"Наша команда ({'ATK' if atk.get('id') == family_id else 'DEF'})"
+    embed.add_field(
+        name=our_label,
+        value=f"K: **{_s(our_players,'kills')}** | DMG: **{_s(our_players,'damage')}** | HS: **{_s(our_players,'headshots')}**",
+        inline=False,
+    )
+    embed.add_field(
+        name="Противник",
+        value=f"K: **{_s(enemy_players,'kills')}** | DMG: **{_s(enemy_players,'damage')}** | HS: **{_s(enemy_players,'headshots')}**",
+        inline=False,
+    )
+    if our_players:
+        embed.add_field(name=f"📊 {our_label}", value=_player_table(our_players), inline=False)
+    if enemy_players:
+        embed.add_field(name="📊 Противник",    value=_player_table(enemy_players), inline=False)
+
+    embed.set_footer(text=f"⏱ {start_str} → {end_str} | vzp-gta5rp.com")
+    await ch.send(embed=embed)
+
+
+# ─── Background monitoring loop ───────────────────────────
+
+@tasks.loop(seconds=15)
+async def vzp_monitor_loop():
+    import time
+    now = time.time()
+    async with aiohttp.ClientSession() as session:
+        for guild_id, cfg in list(vzp_monitor_config.items()):
+            if not cfg.get("monitoringEnabled"):
+                continue
+            interval = cfg.get("pollInterval", 20)
+            if now - vzp_last_check.get(guild_id, 0) < interval:
+                continue
+            vzp_last_check[guild_id] = now
+
+            family_id = cfg.get("familyId")
+            server_id = cfg.get("serverId")
+            if not family_id or not server_id:
+                continue
+
+            processed = vzp_processed_events.setdefault(guild_id, {})
+            changed = False
+
+            events = await _vzp_get(session, "/events", serverId=server_id, limit=50)
+            events = _vzp_unwrap(events)
+            if not isinstance(events, list):
+                events = []
+
+            for ev in events:
+                eid = str(ev.get("id") or ev.get("eventId") or "")
+                if not eid:
+                    continue
+                atk  = ev.get("attackerOrganization") or {}
+                def_ = ev.get("defenderOrganization") or {}
+                if atk.get("id") != family_id and def_.get("id") != family_id:
+                    continue
+
+                ended  = ev.get("endedAt")
+                status = processed.get(eid)
+
+                if ended is None and status is None:
+                    processed[eid] = "notified"
+                    changed = True
+                    try:
+                        await _send_war_started(guild_id, ev)
+                    except Exception as e:
+                        print(f"VZP send_started error: {e}")
+
+                elif ended is not None and status == "notified":
+                    detail = await _vzp_get(session, f"/events/{eid}")
+                    detail = _vzp_unwrap(detail) or ev
+                    processed[eid] = "completed"
+                    changed = True
+                    try:
+                        await _send_war_result(guild_id, detail)
+                    except Exception as e:
+                        print(f"VZP send_result error: {e}")
+
+                elif ended is not None and status is None:
+                    processed[eid] = "completed"
+                    changed = True
+
+            if changed:
+                save_data()
+
+
+@vzp_monitor_loop.before_loop
+async def _before_vzp():
+    await bot.wait_until_ready()
+
+
+# ─── Helper: parse channel id from mention or raw id ──────
+
+def _parse_channel_id(val: str):
+    cleaned = val.strip().lstrip("<#").rstrip(">")
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
+
+
+# ─── Setup Modal ──────────────────────────────────────────
+
+class VzpSetupModal(ui.Modal, title="⚔️ Настройка мониторинга ВЗП"):
+    family_input = ui.TextInput(
+        label="Название семьи",
+        placeholder="Например: MORIARTY",
+        required=True,
+        max_length=50,
+    )
+    server_input = ui.TextInput(
+        label="ID сервера GTA5RP",
+        placeholder="1=Downtown, 20=Murrieta, 4=Vinewood, 5=Rockford",
+        required=True,
+        max_length=5,
+    )
+    alert_input = ui.TextInput(
+        label="Канал уведомлений о начале войны",
+        placeholder="ID канала или #упоминание",
+        required=True,
+        max_length=30,
+    )
+    results_input = ui.TextInput(
+        label="Канал результатов войны",
+        placeholder="ID канала или #упоминание",
+        required=True,
+        max_length=30,
+    )
+    mentions_input = ui.TextInput(
+        label="Роли/юзеры для тега (ID через запятую)",
+        placeholder="123456789, 987654321",
+        required=False,
+        max_length=300,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        async with aiohttp.ClientSession() as session:
+            orgs_raw = await _vzp_get(session, "/stats/organizations")
+        orgs = _vzp_unwrap(orgs_raw)
+        if not isinstance(orgs, list):
+            await interaction.response.send_message("❌ Не удалось получить список семей с API.", ephemeral=True)
+            return
+
+        query = self.family_input.value.strip().lower()
+        matches = [o for o in orgs if isinstance(o, dict) and query in (o.get("name") or "").lower()]
+
+        if not matches:
+            await interaction.response.send_message(
+                f"❌ Семья `{self.family_input.value}` не найдена. Проверь название.", ephemeral=True
+            )
+            return
+
+        if len(matches) > 1:
+            view = _VzpFamilySelect(matches[:10], self)
+            desc = "\n".join(
+                f"`{i+1}.` **{m.get('name','?')}** (ID: {m.get('id','?')})"
+                for i, m in enumerate(matches[:10])
+            )
+            await interaction.response.send_message(
+                f"Найдено несколько семей:\n{desc}\n\nВыбери нужную:",
+                view=view, ephemeral=True,
+            )
+            return
+
+        await self._apply(interaction, matches[0])
+
+    async def _apply(self, interaction: discord.Interaction, family: dict):
+        guild_id = interaction.guild_id
+
+        try:
+            srv_id = int(self.server_input.value.strip())
+        except ValueError:
+            await interaction.response.send_message("❌ ID сервера должен быть числом.", ephemeral=True)
+            return
+
+        alert_ch   = _parse_channel_id(self.alert_input.value)
+        results_ch = _parse_channel_id(self.results_input.value)
+        if not alert_ch or not results_ch:
+            await interaction.response.send_message("❌ Не удалось распознать ID каналов.", ephemeral=True)
+            return
+
+        mention_roles, mention_users = [], []
+        for part in (self.mentions_input.value or "").split(","):
+            part = part.strip().lstrip("<@&># ").rstrip("> ")
+            if not part:
+                continue
+            try:
+                mid = int(part)
+                if interaction.guild.get_role(mid):
+                    mention_roles.append(mid)
+                else:
+                    mention_users.append(mid)
+            except ValueError:
+                pass
+
+        vzp_monitor_config[guild_id] = {
+            "familyId":         family.get("id"),
+            "familyName":       family.get("name"),
+            "serverId":         srv_id,
+            "alertChannelId":   alert_ch,
+            "resultsChannelId": results_ch,
+            "mentionRoles":     mention_roles,
+            "mentionUsers":     mention_users,
+            "pollInterval":     20,
+            "monitoringEnabled": True,
+        }
+        vzp_processed_events.setdefault(guild_id, {})
+        save_data()
+
+        embed = discord.Embed(title="✅ Мониторинг ВЗП настроен", color=0x57F287, timestamp=datetime.now())
+        embed.add_field(name="Семья",              value=f"{family.get('name')} (ID: {family.get('id')})", inline=False)
+        embed.add_field(name="Сервер GTA5RP",      value=str(srv_id),         inline=True)
+        embed.add_field(name="Канал начала войны", value=f"<#{alert_ch}>",    inline=True)
+        embed.add_field(name="Канал результатов",  value=f"<#{results_ch}>",  inline=True)
+        embed.add_field(name="Теги ролей",  value=" ".join(f"<@&{r}>" for r in mention_roles)  or "нет", inline=True)
+        embed.add_field(name="Теги юзеров", value=" ".join(f"<@{u}>"  for u in mention_users)  or "нет", inline=True)
+        embed.add_field(name="Интервал",    value="20 сек", inline=True)
+        embed.set_footer(text="Мониторинг запущен")
+        try:
+            await interaction.response.send_message(embed=embed)
+        except discord.InteractionResponded:
+            await interaction.followup.send(embed=embed)
+
+
+class _VzpFamilySelect(ui.View):
+    def __init__(self, families: list, modal: VzpSetupModal):
+        super().__init__(timeout=60)
+        self.modal = modal
+        for i, fam in enumerate(families):
+            btn = ui.Button(label=(fam.get("name") or f"#{i+1}")[:25], row=i // 5)
+            btn.callback = self._make_cb(fam)
+            self.add_item(btn)
+
+    def _make_cb(self, family: dict):
+        async def cb(interaction: discord.Interaction):
+            await self.modal._apply(interaction, family)
+            self.stop()
+        return cb
+
+
+# ─── Slash Commands ───────────────────────────────────────
+
+@tree.command(name="взп-настройка", description="Настроить мониторинг войн ВЗП")
+async def vzp_setup_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        return
+    # Показываем список серверов перед модалом
+    async with aiohttp.ClientSession() as session:
+        servers = await _vzp_get(session, "/servers")
+    servers = _vzp_unwrap(servers)
+    if isinstance(servers, list) and servers:
+        lines = [
+            f"`{s.get('id')}` — **{s.get('name','?')}** (онлайн: {s.get('online','?')})"
+            for s in servers[:12]
+        ]
+        hint = "**Доступные серверы GTA5RP:**\n" + "\n".join(lines) + "\n\nОткрываю форму настройки..."
+        await interaction.response.send_message(hint, ephemeral=True)
+        await interaction.followup.send_modal(VzpSetupModal())
+    else:
+        await interaction.response.send_modal(VzpSetupModal())
+
+
+@tree.command(name="взп-статус", description="Текущие настройки мониторинга ВЗП")
+async def vzp_status_cmd(interaction: discord.Interaction):
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен. Используй `/взп-настройка`.", ephemeral=True)
+        return
+    embed = discord.Embed(title="⚙️ Статус мониторинга ВЗП", color=0x5865F2, timestamp=datetime.now())
+    embed.add_field(name="Семья",    value=f"{cfg.get('familyName')} (ID: {cfg.get('familyId')})", inline=False)
+    embed.add_field(name="Сервер",   value=str(cfg.get("serverId")),   inline=True)
+    embed.add_field(name="Статус",   value="🟢 Включён" if cfg.get("monitoringEnabled") else "🔴 Остановлен", inline=True)
+    embed.add_field(name="Интервал", value=f"{cfg.get('pollInterval', 20)} сек", inline=True)
+    embed.add_field(name="Канал начала",     value=f"<#{cfg.get('alertChannelId')}>",   inline=True)
+    embed.add_field(name="Канал результатов",value=f"<#{cfg.get('resultsChannelId')}>", inline=True)
+    embed.add_field(name="Теги ролей",  value=" ".join(f"<@&{r}>" for r in cfg.get("mentionRoles",[]))  or "нет", inline=True)
+    embed.add_field(name="Теги юзеров", value=" ".join(f"<@{u}>"  for u in cfg.get("mentionUsers",[]))  or "нет", inline=True)
+    embed.add_field(name="Обработано войн", value=str(len(vzp_processed_events.get(interaction.guild_id, {}))), inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="взп-стоп", description="Остановить мониторинг ВЗП")
+async def vzp_stop_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        return
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен.", ephemeral=True)
+        return
+    cfg["monitoringEnabled"] = False
+    save_data()
+    await interaction.response.send_message("🔴 Мониторинг ВЗП остановлен.")
+
+
+@tree.command(name="взп-старт", description="Запустить мониторинг ВЗП")
+async def vzp_start_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        return
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен. Используй `/взп-настройка`.", ephemeral=True)
+        return
+    cfg["monitoringEnabled"] = True
+    save_data()
+    await interaction.response.send_message("🟢 Мониторинг ВЗП запущен.")
+
+
+@tree.command(name="взп-интервал", description="Изменить интервал опроса API (15–120 сек)")
+@app_commands.describe(секунды="Интервал опроса в секундах (мин. 15, макс. 120)")
+async def vzp_interval_cmd(interaction: discord.Interaction, секунды: int):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        return
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен.", ephemeral=True)
+        return
+    if not (15 <= секунды <= 120):
+        await interaction.response.send_message("❌ Интервал: от 15 до 120 секунд.", ephemeral=True)
+        return
+    cfg["pollInterval"] = секунды
+    save_data()
+    await interaction.response.send_message(f"✅ Интервал опроса: **{секунды} сек**.")
+
+
+@tree.command(name="взп-семья", description="Статистика семьи на vzp-gta5rp.com")
+async def vzp_family_cmd(interaction: discord.Interaction):
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен.", ephemeral=True)
+        return
+    await interaction.response.defer()
+    async with aiohttp.ClientSession() as session:
+        raw = await _vzp_get(session, f"/stats/organizations/{cfg['familyId']}")
+    data = _vzp_unwrap(raw) if raw else None
+    if not data or not isinstance(data, dict):
+        await interaction.followup.send("❌ Не удалось получить статистику семьи.")
+        return
+
+    embed = discord.Embed(
+        title=f"📊 Статистика — {data.get('name', cfg['familyName'])}",
+        color=0x5865F2,
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="Побед",      value=str(data.get("wins",   "?")), inline=True)
+    embed.add_field(name="Поражений",  value=str(data.get("losses", "?")), inline=True)
+    wr = data.get("winrate") or data.get("winRate")
+    if wr is not None:
+        embed.add_field(name="Винрейт", value=f"{float(wr):.1f}%", inline=True)
+    embed.add_field(name="Глобальный ранк", value=f"#{data.get('rank','?')}", inline=True)
+    sr = data.get("serverRank") or data.get("server_rank")
+    if sr:
+        embed.add_field(name="Ранк на сервере", value=f"#{sr}", inline=True)
+    embed.set_footer(text="vzp-gta5rp.com")
+    await interaction.followup.send(embed=embed)
+
+
+@tree.command(name="взп-история", description="История последних войн семьи")
+@app_commands.describe(количество="Сколько войн показать (1–20, по умолчанию 5)")
+async def vzp_history_cmd(interaction: discord.Interaction, количество: int = 5):
+    cfg = vzp_monitor_config.get(interaction.guild_id)
+    if not cfg:
+        await interaction.response.send_message("ℹ️ Мониторинг не настроен.", ephemeral=True)
+        return
+    количество = max(1, min(количество, 20))
+    await interaction.response.defer()
+    async with aiohttp.ClientSession() as session:
+        raw = await _vzp_get(session, f"/stats/organizations/{cfg['familyId']}/history",
+                             limit=количество, offset=0)
+    items = _vzp_unwrap(raw)
+    if not isinstance(items, list):
+        items = []
+
+    embed = discord.Embed(
+        title=f"📜 История войн — {cfg['familyName']}",
+        color=0x5865F2,
+        timestamp=datetime.now(),
+    )
+    family_id = cfg["familyId"]
+    for ev in items[:количество]:
+        atk    = (ev.get("attackerOrganization") or {}).get("name", "?")
+        def_   = (ev.get("defenderOrganization") or {}).get("name", "?")
+        winner = (ev.get("winnerOrganization")   or {}).get("id")
+        result = "✅ Победа" if winner == family_id else "❌ Поражение"
+        point  = ev.get("pointName", "?")
+        ts     = ev.get("endedAt") or ev.get("startedAt")
+        time_s = f"<t:{int(ts)}:d>" if ts else "—"
+        embed.add_field(
+            name=f"{result} — {point}",
+            value=f"{atk} ⚔️ {def_}\n{time_s}",
+            inline=False,
+        )
+    if not items:
+        embed.description = "История войн пуста."
+    embed.set_footer(text="vzp-gta5rp.com")
+    await interaction.followup.send(embed=embed)
+
+
+# ══════════════════════════════════════════════════════════
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):

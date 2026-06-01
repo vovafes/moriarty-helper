@@ -229,6 +229,10 @@ voice_autoconnect: dict = {}
 # { guild_id: [ { "user_id": int, "amount": int, "date": str (ISO) } ] }
 obshak_deposits: dict = {}
 
+# 🎰 ПОДКРУТКА КАЗИНО { guild_id: { role_id: float } }
+# float — множитель шанса победы: 1.0 = честно, <1 = хуже, >1 = лучше
+casino_role_luck: dict = {}
+
 # ─────────────────────────────────────────────
 # ФАЙЛЫ ОТДЕЛЬНЫХ БАЗ ДАННЫХ
 # ─────────────────────────────────────────────
@@ -595,6 +599,7 @@ def save_data():
             "voice_autoconnect":    {str(g): v for g, v in voice_autoconnect.items()},
             "vzp_monitor_config":   {str(g): v for g, v in vzp_monitor_config.items()},
             "vzp_processed_events": {str(g): v for g, v in vzp_processed_events.items()},
+            "casino_role_luck":     {str(g): {str(r): v for r, v in roles.items()} for g, roles in casino_role_luck.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -720,6 +725,8 @@ def load_data():
             vzp_monitor_config[int(g)] = v
         for g, v in data.get("vzp_processed_events", {}).items():
             vzp_processed_events[int(g)] = v
+        for g, roles in data.get("casino_role_luck", {}).items():
+            casino_role_luck[int(g)] = {int(r): v for r, v in roles.items()}
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -5573,7 +5580,6 @@ roulette_stats: dict = {}
 roulette_cd: dict = {}
 
 ROULETTE_MIN   = 10
-ROULETTE_MAX   = 1000
 ROULETTE_CD_S  = 5   # секунд
 
 # Числа рулетки по цветам
@@ -5645,13 +5651,19 @@ def _fmt(n: int) -> str:
 
 def _parse_bet(raw: str):
     """
-    Возвращает ("color", "красное"|"чёрное") или ("number", 0-36) или None при ошибке.
+    Возвращает ("color", str) | ("number", int) | ("sector", (lo, hi)) | None.
     """
     low = raw.lower()
     if low in ("красное", "красный"):
         return ("color", "красное")
     if low in ("чёрное", "чёрный", "черное", "черный"):
         return ("color", "чёрное")
+    if low in ("д1", "1-12"):
+        return ("sector", (1, 12))
+    if low in ("д2", "13-24"):
+        return ("sector", (13, 24))
+    if low in ("д3", "25-36"):
+        return ("sector", (25, 36))
     try:
         n = int(raw)
         if 0 <= n <= 36:
@@ -5677,6 +5689,41 @@ def _set_cd(guild_id: int, user_id: int):
     roulette_cd[guild_id][user_id] = datetime.now()
 
 
+# ───────────────── Подкрутка по роли ──────────────────
+def _get_role_luck(guild_id: int, member: discord.Member) -> float:
+    role_luck = casino_role_luck.get(guild_id, {})
+    for role in member.roles:
+        if role.id in role_luck:
+            return role_luck[role.id]
+    return 1.0
+
+
+def _biased_outcome(bet_kind, bet_val, luck: float) -> tuple:
+    """
+    Возвращает (displayed_number, won).
+    Число всегда соответствует итогу — внешне выглядит честно.
+    luck=1.0 → честная вероятность, <1 → хуже, >1 → лучше.
+    """
+    if bet_kind == "color":
+        base_prob = 18 / 37
+        win_pool  = list(RED_NUMBERS if bet_val == "красное" else BLACK_NUMBERS)
+        lose_pool = list(BLACK_NUMBERS if bet_val == "красное" else RED_NUMBERS) + [0]
+    elif bet_kind == "number":
+        base_prob = 1 / 37
+        win_pool  = [bet_val]
+        lose_pool = [n for n in range(37) if n != bet_val]
+    else:  # sector
+        lo, hi    = bet_val
+        base_prob = 12 / 37
+        win_pool  = list(range(lo, hi + 1))
+        lose_pool = [n for n in range(37) if n < lo or n > hi]
+
+    adj_prob = min(base_prob * luck, 0.97)
+    won      = random.random() < adj_prob
+    display  = random.choice(win_pool if won else lose_pool)
+    return display, won
+
+
 # ───────────────── Команда !рулетка ──────────────────
 @bot.command(name="рулетка")
 async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
@@ -5692,12 +5739,15 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
                 "**Ставки:**\n"
                 "• `красное` — цвет x2\n"
                 "• `чёрное` — цвет x2\n"
-                "• `0-36` — число x35\n\n"
-                f"**Мин. ставка:** {_fmt(ROULETTE_MIN)} 💎\n"
-                f"**Макс. ставка:** {_fmt(ROULETTE_MAX)} 💎\n\n"
+                "• `0-36` — число x35\n"
+                "• `д1` / `1-12` — сектор 1–12 x3\n"
+                "• `д2` / `13-24` — сектор 13–24 x3\n"
+                "• `д3` / `25-36` — сектор 25–36 x3\n\n"
+                f"**Мин. ставка:** {_fmt(ROULETTE_MIN)} 💎\n\n"
                 "**Примеры:**\n"
                 "`!рулетка красное 100`\n"
-                "`!рулетка 17 50`"
+                "`!рулетка 17 50`\n"
+                "`!рулетка д2 500`"
             ),
             color=discord.Color.blurple(),
         )
@@ -5728,8 +5778,6 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
 
     if stake < ROULETTE_MIN:
         return await ctx.send(f"❌ Минимальная ставка — **{_fmt(ROULETTE_MIN)}** 💎", delete_after=6)
-    if stake > ROULETTE_MAX:
-        return await ctx.send(f"❌ Максимальная ставка — **{_fmt(ROULETTE_MAX)}** 💎", delete_after=6)
 
     balance = get_points(guild_id, user_id)
     if balance < stake:
@@ -5758,20 +5806,22 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
         await asyncio.sleep(0.8)
 
     # ── Результат ──
-    result_n     = _spin()
+    bet_kind, bet_val = parsed
+    luck         = _get_role_luck(guild_id, ctx.author)
+    result_n, won = _biased_outcome(bet_kind, bet_val, luck)
     result_color = _number_color(result_n)
     color_emoji  = _color_emoji(result_color)
 
-    bet_kind, bet_val = parsed
-
     if bet_kind == "color":
-        won = (result_color == bet_val)
         bet_label = f"{_color_emoji(bet_val)} {bet_val}"
         payout    = stake * 2 if won else 0
-    else:
-        won = (result_n == bet_val)
+    elif bet_kind == "number":
         bet_label = f"🎯 число {bet_val}"
         payout    = stake * 35 if won else 0
+    else:  # sector
+        lo, hi    = bet_val
+        bet_label = f"📊 сектор {lo}–{hi}"
+        payout    = stake * 3 if won else 0
 
     profit_delta = payout - stake
     add_points(guild_id, user_id, profit_delta)
@@ -5863,6 +5913,76 @@ async def slash_roulette_top(interaction: discord.Interaction):
     )
     embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))
     await interaction.response.send_message(embed=embed)
+
+
+# ───────────────── /казино_шанс — задать множитель роли ──────────────────
+@tree.command(name="казино_шанс", description="Задать множитель удачи в казино для роли")
+@app_commands.describe(
+    роль="Роль, для которой настраивается множитель",
+    множитель="0.1=почти всегда проигрыш · 1.0=честно · 3.0=почти всегда победа"
+)
+async def slash_casino_luck_set(
+    interaction: discord.Interaction,
+    роль: discord.Role,
+    множитель: float,
+):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+    if множитель < 0.0 or множитель > 10.0:
+        return await interaction.response.send_message(
+            "❌ Множитель должен быть от 0.0 до 10.0.", ephemeral=True
+        )
+    gid = interaction.guild_id
+    if gid not in casino_role_luck:
+        casino_role_luck[gid] = {}
+    casino_role_luck[gid][роль.id] = множитель
+    save_data()
+    await interaction.response.send_message(
+        f"✅ Роль {роль.mention}: множитель казино **{множитель}x** сохранён.",
+        ephemeral=True,
+    )
+
+
+@tree.command(name="казино_шанс_сброс", description="Сбросить множитель удачи для роли")
+@app_commands.describe(роль="Роль для сброса")
+async def slash_casino_luck_reset(interaction: discord.Interaction, роль: discord.Role):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+    gid = interaction.guild_id
+    removed = casino_role_luck.get(gid, {}).pop(роль.id, None)
+    if removed is None:
+        return await interaction.response.send_message(
+            f"ℹ️ У роли {роль.mention} не было настроенного множителя.", ephemeral=True
+        )
+    save_data()
+    await interaction.response.send_message(
+        f"✅ Множитель для {роль.mention} сброшен.", ephemeral=True
+    )
+
+
+@tree.command(name="казино_шанс_список", description="Список ролей с настроенным множителем в казино")
+async def slash_casino_luck_list(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+    gid   = interaction.guild_id
+    roles = casino_role_luck.get(gid, {})
+    if not roles:
+        return await interaction.response.send_message(
+            "ℹ️ Нет настроенных ролей.", ephemeral=True
+        )
+    lines = []
+    for role_id, mult in roles.items():
+        role = interaction.guild.get_role(role_id)
+        name = role.mention if role else f"<удалена id={role_id}>"
+        arrow = "🔻" if mult < 1.0 else ("🔺" if mult > 1.0 else "⚪")
+        lines.append(f"{arrow} {name} — **{mult}x**")
+    embed = discord.Embed(
+        title="🎰 Подкрутка казино — роли",
+        description="\n".join(lines),
+        color=discord.Color.dark_gold(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(gid))
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ═══════════════════════════════════════════════════════════

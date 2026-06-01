@@ -1249,12 +1249,27 @@ class InactiveModal(ui.Modal, title="📅 Уход в инактив"):
         guild_id = interaction.guild_id
         user_id  = interaction.user.id
 
+        raw = str(self.return_date).strip()
+        import re as _re
+        m = _re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", raw)
+        if not m:
+            return await interaction.response.send_message(
+                "⚠️ Неверный формат даты. Используй формат **ДД.ММ.ГГГГ**, например `25.04.2026`",
+                ephemeral=True,
+            )
+        day, mon, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not (1 <= mon <= 12 and 1 <= day <= 31 and year >= 2020):
+            return await interaction.response.send_message(
+                "⚠️ Некорректная дата. Проверь, что день и месяц указаны правильно.",
+                ephemeral=True,
+            )
+
         if guild_id not in inactive_list:
             inactive_list[guild_id] = {}
 
         inactive_list[guild_id][user_id] = {
             "reason":      str(self.reason),
-            "return_date": str(self.return_date),
+            "return_date": raw,
             "since":       datetime.now(),
         }
         save_data()
@@ -1265,7 +1280,7 @@ class InactiveModal(ui.Modal, title="📅 Уход в инактив"):
             description=(
                 f"📅 Вы добавлены в список инактива\n"
                 f"**Причина:** {self.reason}\n"
-                f"**Вернусь:** `{self.return_date}`"
+                f"**Вернусь:** `{raw}`"
             ),
             color=discord.Color.orange(),
         )
@@ -3819,7 +3834,9 @@ async def on_ready():
     if not update_stats.is_running():
         update_stats.start()
     if not voice_reward_loop.is_running():
-                voice_reward_loop.start()
+        voice_reward_loop.start()
+    if not inactive_expire_loop.is_running():
+        inactive_expire_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
     for gid in list(roster_settings.keys()):
         guild = bot.get_guild(gid)
@@ -6393,6 +6410,38 @@ def _run_health_server():
     port = int(os.getenv("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), _HealthHandler)
     server.serve_forever()
+
+# ─────────────────────────────────────────────
+# ТАЙМЕР ИНАКТИВА — авто-удаление по дате ДД.ММ.ГГГГ
+# ─────────────────────────────────────────────
+
+@tasks.loop(hours=1)
+async def inactive_expire_loop():
+    """Каждый час проверяет список инактива и удаляет тех, чья дата возвращения наступила."""
+    import re as _re
+    from datetime import date as _date
+    today = datetime.now().date()
+    for guild_id, users in list(inactive_list.items()):
+        expired = []
+        for uid, entry in users.items():
+            m = _re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", entry.get("return_date", "").strip())
+            if not m:
+                continue
+            try:
+                rd = _date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            except ValueError:
+                continue
+            if today >= rd:
+                expired.append(uid)
+        if not expired:
+            continue
+        for uid in expired:
+            inactive_list[guild_id].pop(uid, None)
+        save_data()
+        guild = bot.get_guild(guild_id)
+        if guild:
+            await refresh_inactive_message(guild)
+
 
 threading.Thread(target=_run_health_server, daemon=True).start()
 bot.run(os.getenv("DISCORD_TOKEN"))

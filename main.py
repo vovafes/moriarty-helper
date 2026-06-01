@@ -6246,16 +6246,11 @@ async def vzp_setup_cmd(interaction: discord.Interaction):
     async with aiohttp.ClientSession() as session:
         servers = await _vzp_get(session, "/servers")
     servers = _vzp_unwrap(servers)
+    modal = VzpSetupModal()
     if isinstance(servers, list) and servers:
-        lines = [
-            f"`{s.get('id')}` — **{s.get('name','?')}** (онлайн: {s.get('online','?')})"
-            for s in servers[:12]
-        ]
-        hint = "**Доступные серверы GTA5RP:**\n" + "\n".join(lines) + "\n\nОткрываю форму настройки..."
-        await interaction.response.send_message(hint, ephemeral=True)
-        await interaction.followup.send_modal(VzpSetupModal())
-    else:
-        await interaction.response.send_modal(VzpSetupModal())
+        placeholder = ", ".join(f"{s.get('id')}={s.get('name','?')}" for s in servers[:8])
+        modal.server_input.placeholder = placeholder[:100]
+    await interaction.response.send_modal(modal)
 
 
 @tree.command(name="взп-статус", description="Текущие настройки мониторинга ВЗП")

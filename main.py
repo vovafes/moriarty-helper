@@ -5960,6 +5960,47 @@ async def slash_casino_luck_reset(interaction: discord.Interaction, роль: di
     )
 
 
+@tree.command(name="казино_шанс_проверить", description="Проверить какой множитель применится к участнику")
+@app_commands.describe(участник="Участник для проверки")
+async def slash_casino_luck_check(interaction: discord.Interaction, участник: discord.Member):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+    gid       = interaction.guild_id
+    role_luck = casino_role_luck.get(gid, {})
+
+    matched_role  = None
+    matched_mult  = None
+    for role in участник.roles:
+        if role.id in role_luck:
+            matched_role = role
+            matched_mult = role_luck[role.id]
+            break
+
+    lines = [f"**Участник:** {участник.mention}"]
+    if matched_role:
+        arrow = "🔻" if matched_mult < 1.0 else "🔺"
+        lines.append(f"**Активный множитель:** {arrow} **{matched_mult}x** (роль {matched_role.mention})")
+    else:
+        lines.append("**Активный множитель:** ⚪ **1.0x** (ни одна роль не настроена)")
+
+    if role_luck:
+        configured = []
+        for role_id, mult in role_luck.items():
+            r = interaction.guild.get_role(role_id)
+            rname = r.mention if r else f"<удалена {role_id}>"
+            has = "✅" if any(ro.id == role_id for ro in участник.roles) else "❌"
+            configured.append(f"{has} {rname} — **{mult}x**")
+        lines.append("\n**Все настроенные роли (✅ = есть у участника):**\n" + "\n".join(configured))
+
+    embed = discord.Embed(
+        title="🎰 Диагностика казино",
+        description="\n".join(lines),
+        color=discord.Color.dark_gold(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(gid))
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @tree.command(name="казино_шанс_список", description="Список ролей с настроенным множителем в казино")
 async def slash_casino_luck_list(interaction: discord.Interaction):
     if not is_admin(interaction):

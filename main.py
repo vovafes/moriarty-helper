@@ -6037,12 +6037,15 @@ async def _vzp_get(session: aiohttp.ClientSession, path: str, **params):
     try:
         async with session.get(
             f"{VZP_API}{path}", params=params or None,
-            timeout=aiohttp.ClientTimeout(total=10)
+            timeout=aiohttp.ClientTimeout(total=15),
+            headers={"User-Agent": "Mozilla/5.0 (compatible; bot/1.0)"},
         ) as r:
             if r.status == 200:
                 return await r.json(content_type=None)
+            body = await r.text()
+            print(f"VZP API error {path}: HTTP {r.status} — {body[:200]}")
     except Exception as e:
-        print(f"VZP API error {path}: {e}")
+        print(f"VZP API error {path}: {type(e).__name__}: {e}")
     return None
 
 
@@ -6235,8 +6238,15 @@ async def vzp_monitor_loop():
                         print(f"VZP send_result error: {e}")
 
                 elif ended is not None and status is None:
+                    # bot missed the start — still send result notification
+                    detail = await _vzp_get(session, f"/events/{eid}")
+                    detail = _vzp_unwrap(detail) or ev
                     processed[eid] = "completed"
                     changed = True
+                    try:
+                        await _send_war_result(guild_id, detail)
+                    except Exception as e:
+                        print(f"VZP send_result (missed start) error: {e}")
 
             if changed:
                 save_data()
@@ -6478,7 +6488,8 @@ async def vzp_family_cmd(interaction: discord.Interaction):
     wr = data.get("winrate") or data.get("winRate")
     if wr is not None:
         embed.add_field(name="Винрейт", value=f"{float(wr):.1f}%", inline=True)
-    embed.add_field(name="Глобальный ранк", value=f"#{data.get('rank','?')}", inline=True)
+    gr = data.get("rank") or data.get("globalRank") or data.get("global_rank") or data.get("position")
+    embed.add_field(name="Глобальный ранк", value=f"#{gr}" if gr is not None else "?", inline=True)
     sr = data.get("serverRank") or data.get("server_rank")
     if sr:
         embed.add_field(name="Ранк на сервере", value=f"#{sr}", inline=True)

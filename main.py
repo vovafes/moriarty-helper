@@ -294,6 +294,7 @@ def is_ticket_manager(interaction: discord.Interaction) -> bool:
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True
 intents.reactions = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -4799,6 +4800,8 @@ async def voice_reward_loop():
                 for m in members:
                     if _member_playing_game(m, game_name):
                         add_points(guild.id, m.id, amount_game)
+                    elif amount > 0:
+                        add_points(guild.id, m.id, amount)
 
         save_data()
 
@@ -5062,8 +5065,8 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
         color=0x5865F2,
         timestamp=datetime.now(),
     )
-    embed.add_field(name="💎 Войс + игра (начисление)", value=f"**{s.get('amount_game', 15)}** /мин", inline=True)
-    embed.add_field(name="ℹ️ Без игры", value="не начисляется", inline=True)
+    embed.add_field(name="💎 Войс без игры", value=f"**{s.get('amount', 10)}** /мин", inline=True)
+    embed.add_field(name="💎 Войс + игра", value=f"**{s.get('amount_game', 15)}** /мин", inline=True)
     embed.add_field(name="🕹 Название игры", value=s.get("game_name", "GTA5RP"), inline=True)
     embed.add_field(name="🔔 Лог «в игре, не в войсе»", value=log_text, inline=True)
     embed.add_field(name="⏱ Интервал проверки", value=f"**{s.get('game_check_interval', 10)}** мин", inline=True)
@@ -5075,6 +5078,12 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
 
 
 class ActivityRatesModal(ui.Modal, title="💎 Настройки активности"):
+    amount = ui.TextInput(
+        label="Алмазы/мин (войс без игры)",
+        placeholder="10",
+        required=True,
+        max_length=6,
+    )
     amount_game = ui.TextInput(
         label="Алмазы/мин (войс + игра)",
         placeholder="15",
@@ -5100,6 +5109,10 @@ class ActivityRatesModal(ui.Modal, title="💎 Настройки активно
 
     async def on_submit(self, interaction: discord.Interaction):
         s = _get_voice_settings(interaction.guild_id)
+        try:
+            s["amount"] = max(0, int(str(self.amount).strip()))
+        except ValueError:
+            pass
         try:
             s["amount_game"] = max(1, int(str(self.amount_game).strip()))
         except ValueError:
@@ -5184,6 +5197,7 @@ class ActivityView(ui.View):
     async def btn_rates(self, interaction: discord.Interaction, button: ui.Button):
         s = _get_voice_settings(interaction.guild_id)
         modal = ActivityRatesModal(None)
+        modal.amount.default           = str(s.get("amount", 10))
         modal.amount_game.default      = str(s.get("amount_game", 15))
         modal.game_name.default        = s.get("game_name", "GTA5RP")
         modal.game_check_interval.default = str(s.get("game_check_interval", 10))

@@ -4867,14 +4867,15 @@ async def game_activity_check_loop():
         if not log_channel:
             continue
 
-        lines = "\n".join(f"• {m.mention} ({m.display_name})" for m in in_game_not_voice)
+        count = len(in_game_not_voice)
+        lines = "\n".join(f"• {m.mention}" for m in in_game_not_voice)
         embed = discord.Embed(
-            title=f"🎮 В игре, но не в войсе — {game_name}",
+            title=f"🎮 Не в войсе — {count} чел.",
             description=lines,
             color=discord.Color.orange(),
             timestamp=datetime.now(),
         )
-        embed.set_footer(text="MORIARTY")
+        embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
         try:
             await log_channel.send(embed=embed)
         except Exception:

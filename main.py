@@ -4845,10 +4845,20 @@ async def game_activity_check_loop():
                     if not m.bot:
                         in_voice_ids.add(m.id)
 
+        # Фильтр по ролям фамы (если задан)
+        watch_role_ids = set(s.get("game_watch_roles", []))
+
+        def _passes_filter(m: discord.Member) -> bool:
+            if not watch_role_ids:
+                return True
+            return any(r.id in watch_role_ids for r in m.roles)
+
         # Ищем участников в игре, но не в войсе
         in_game_not_voice = [
             m for m in guild.members
-            if not m.bot and m.id not in in_voice_ids and _member_playing_game(m, game_name)
+            if not m.bot and m.id not in in_voice_ids
+            and _member_playing_game(m, game_name)
+            and _passes_filter(m)
         ]
         if not in_game_not_voice:
             continue
@@ -4881,12 +4891,14 @@ def _get_voice_settings(guild_id: int) -> dict:
             "game_name": "RAGE Multiplayer",
             "game_log_channel": None,
             "game_check_interval": 10,
+            "game_watch_roles": [],
         }
     s = voice_reward_settings[guild_id]
     s.setdefault("amount_game", s.get("amount", 10) + 5)
     s.setdefault("game_name", "GTA5RP")
     s.setdefault("game_log_channel", None)
     s.setdefault("game_check_interval", 10)
+    s.setdefault("game_watch_roles", [])
     return s
 
 
@@ -5050,6 +5062,7 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
     cats = s.get("categories", [])
     excl = s.get("excluded_channels", [])
     log_ch_id = s.get("game_log_channel")
+    watch_role_ids = s.get("game_watch_roles", [])
 
     cats_text = (
         "\n".join(
@@ -5057,8 +5070,9 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
             for c in cats
         ) or "—"
     )
-    excl_text = "\n".join(f"• <#{c}>" for c in excl) or "—"
-    log_text  = f"<#{log_ch_id}>" if log_ch_id else "не задан"
+    excl_text  = "\n".join(f"• <#{c}>" for c in excl) or "—"
+    log_text   = f"<#{log_ch_id}>" if log_ch_id else "не задан"
+    roles_text = "\n".join(f"• <@&{r}>" for r in watch_role_ids) or "все участники"
 
     embed = discord.Embed(
         title="🎙 Настройки активности",
@@ -5067,10 +5081,10 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
     )
     embed.add_field(name="💎 Войс без игры", value=f"**{s.get('amount', 10)}** /мин", inline=True)
     embed.add_field(name="💎 Войс + игра", value=f"**{s.get('amount_game', 15)}** /мин", inline=True)
-    embed.add_field(name="🕹 Название игры", value=s.get("game_name", "GTA5RP"), inline=True)
+    embed.add_field(name="🕹 Название игры", value=s.get("game_name", "RAGE Multiplayer"), inline=True)
     embed.add_field(name="🔔 Лог «в игре, не в войсе»", value=log_text, inline=True)
     embed.add_field(name="⏱ Интервал проверки", value=f"**{s.get('game_check_interval', 10)}** мин", inline=True)
-    embed.add_field(name="​", value="​", inline=True)
+    embed.add_field(name="👥 Фильтр по ролям", value=roles_text, inline=True)
     embed.add_field(name="📂 Категории войса", value=cats_text, inline=False)
     embed.add_field(name="🚫 Исключённые каналы", value=excl_text, inline=False)
     embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
@@ -5186,20 +5200,39 @@ class ActivityCategoryRemoveSelect(ui.Select):
         await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
 
 
+class ActivityWatchRoleSelect(ui.RoleSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="👥 Добавить роль фильтра фамы",
+            min_values=1,
+            max_values=5,
+            row=4,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        s = _get_voice_settings(interaction.guild_id)
+        for role in self.values:
+            if role.id not in s["game_watch_roles"]:
+                s["game_watch_roles"].append(role.id)
+        save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
 class ActivityView(ui.View):
     def __init__(self, guild: discord.Guild):
         super().__init__(timeout=300)
         self.add_item(ActivityLogChannelSelect(None))
         self.add_item(ActivityCategoryAddSelect())
         self.add_item(ActivityCategoryRemoveSelect(guild))
+        self.add_item(ActivityWatchRoleSelect())
 
     @ui.button(label="✏️ Ставки и игра", style=discord.ButtonStyle.primary, row=0)
     async def btn_rates(self, interaction: discord.Interaction, button: ui.Button):
         s = _get_voice_settings(interaction.guild_id)
         modal = ActivityRatesModal(None)
-        modal.amount.default           = str(s.get("amount", 10))
-        modal.amount_game.default      = str(s.get("amount_game", 15))
-        modal.game_name.default        = s.get("game_name", "GTA5RP")
+        modal.amount.default              = str(s.get("amount", 10))
+        modal.amount_game.default         = str(s.get("amount_game", 15))
+        modal.game_name.default           = s.get("game_name", "RAGE Multiplayer")
         modal.game_check_interval.default = str(s.get("game_check_interval", 10))
         await interaction.response.send_modal(modal)
 
@@ -5207,6 +5240,13 @@ class ActivityView(ui.View):
     async def btn_remove_log(self, interaction: discord.Interaction, button: ui.Button):
         s = _get_voice_settings(interaction.guild_id)
         s["game_log_channel"] = None
+        save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+    @ui.button(label="🗑 Сбросить фильтр ролей", style=discord.ButtonStyle.danger, row=0)
+    async def btn_clear_roles(self, interaction: discord.Interaction, button: ui.Button):
+        s = _get_voice_settings(interaction.guild_id)
+        s["game_watch_roles"] = []
         save_data()
         await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
 

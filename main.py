@@ -19,6 +19,7 @@ load_dotenv()
 DATA_FILE     = "data.json"
 OBSHAK_FILE   = "obshak.json"
 POINTS_FILE   = "points.json"
+CHIPS_FILE    = "chips.json"
 ROULETTE_FILE = "roulette.json"
 
 # ─────────────────────────────────────────────
@@ -88,6 +89,10 @@ inactive_list: dict = {}
 # 💰 БАЛЛЫ И ШТРАФЫ
 # { guild_id: { user_id: int } }
 points_db: dict = {}
+
+# 🎰 ФИШКИ (только для рулетки)
+# { guild_id: { user_id: int } }
+chips_db: dict = {}
 
 # { guild_id: { user_id: { "warns": int, "reason": str, "moderator": int } } }
 warns_db: dict = {}
@@ -451,6 +456,21 @@ def add_points(guild_id: int, user_id: int, amount: int):
     set_points(guild_id, user_id, current + amount)
 
 
+def get_chips(guild_id: int, user_id: int) -> int:
+    return chips_db.get(guild_id, {}).get(user_id, 0)
+
+
+def set_chips(guild_id: int, user_id: int, amount: int):
+    if guild_id not in chips_db:
+        chips_db[guild_id] = {}
+    chips_db[guild_id][user_id] = max(0, amount)
+    save_chips()
+
+
+def add_chips(guild_id: int, user_id: int, amount: int):
+    set_chips(guild_id, user_id, get_chips(guild_id, user_id) + amount)
+
+
 def get_warns(guild_id: int, user_id: int) -> dict:
     return warns_db.get(guild_id, {}).get(user_id, None)
 
@@ -477,15 +497,17 @@ def remove_warn(guild_id: int, user_id: int) -> bool:
 
 def build_points_embed(guild_id: int, user_id: int) -> discord.Embed:
     points = get_points(guild_id, user_id)
+    chips  = get_chips(guild_id, user_id)
     warn_data = get_warns(guild_id, user_id)
     warns = warn_data["warns"] if warn_data else 0
-    
+
     embed = discord.Embed(
         title="💰 Ваш баланс",
         color=discord.Color.gold(),
         timestamp=datetime.now(),
     )
-    embed.add_field(name="Баллы", value=f"**{points}** 💎", inline=True)
+    embed.add_field(name="Алмазы", value=f"**{points}** 💎", inline=True)
+    embed.add_field(name="Фишки", value=f"**{chips}** 🎰", inline=True)
     embed.add_field(name="Warns", value=f"**{warns}** ⚠️", inline=True)
     embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))
     return embed
@@ -783,6 +805,30 @@ def load_points():
         print("OK: Points loaded from points.json")
     except Exception as e:
         print(f"WARNING: Failed to load points: {e}")
+
+
+def save_chips():
+    try:
+        data = {
+            "chips": {str(g): {str(u): v for u, v in us.items()} for g, us in chips_db.items()}
+        }
+        with open(CHIPS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"WARNING: Failed to save chips: {e}")
+
+
+def load_chips():
+    try:
+        if not os.path.exists(CHIPS_FILE):
+            return
+        with open(CHIPS_FILE, "r", encoding="utf-8") as f:
+            doc = json.load(f)
+        for g, us in doc.get("chips", {}).items():
+            chips_db[int(g)] = {int(u): v for u, v in us.items()}
+        print("OK: Chips loaded from chips.json")
+    except Exception as e:
+        print(f"WARNING: Failed to load chips: {e}")
 
 
 async def refresh_afk_message(guild: discord.Guild):
@@ -2238,6 +2284,50 @@ async def balance(ctx, пользователь: discord.Member = None):
     target = пользователь or ctx.author
     embed  = build_points_embed(ctx.guild.id, target.id)
     embed.set_author(name=target.display_name, icon_url=target.display_avatar.url)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="обмен")
+async def exchange_cmd(ctx, количество: int = None):
+    """!обмен <количество> — обменять алмазы на фишки 1:1"""
+    if not количество or количество < 1:
+        embed = discord.Embed(
+            title="💱 Обмен алмазов на фишки",
+            description=(
+                "**Формат:** `!обмен <количество>`\n\n"
+                "💎 Алмазы → 🎰 Фишки по курсу **1:1**\n"
+                "Фишки используются только в рулетке.\n\n"
+                "**Пример:** `!обмен 500`"
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
+        return await ctx.send(embed=embed)
+
+    gid = ctx.guild.id
+    uid = ctx.author.id
+    diamonds = get_points(gid, uid)
+
+    if diamonds < количество:
+        return await ctx.send(
+            f"❌ Недостаточно алмазов! Нужно **{_fmt(количество)}** 💎, у вас **{_fmt(diamonds)}** 💎",
+            delete_after=8,
+        )
+
+    add_points(gid, uid, -количество)
+    add_chips(gid, uid, количество)
+
+    embed = discord.Embed(
+        title="💱 Обмен выполнен!",
+        description=(
+            f"**{_fmt(количество)}** 💎 → **{_fmt(количество)}** 🎰\n\n"
+            f"Алмазы: **{_fmt(get_points(gid, uid))}** 💎\n"
+            f"Фишки: **{_fmt(get_chips(gid, uid))}** 🎰"
+        ),
+        color=discord.Color.green(),
+        timestamp=datetime.now(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(gid))
     await ctx.send(embed=embed)
 
 
@@ -3810,6 +3900,7 @@ async def on_ready():
     load_data()
     load_obshak()
     load_points()
+    load_chips()
     load_roulette()
     bot.add_view(AfkView())
     bot.add_view(InactiveView())
@@ -3842,6 +3933,8 @@ async def on_ready():
         update_stats.start()
     if not voice_reward_loop.is_running():
         voice_reward_loop.start()
+    if not game_activity_check_loop.is_running():
+        game_activity_check_loop.start()
     if not inactive_expire_loop.is_running():
         inactive_expire_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
@@ -4459,14 +4552,18 @@ class PersonalCabinetView(ui.View):
 
     @ui.button(label="Баланс", emoji="💎", style=discord.ButtonStyle.secondary, custom_id="cabinet_balance", row=0)
     async def btn_balance(self, interaction: discord.Interaction, button: ui.Button):
-        pts = get_points(interaction.guild_id, interaction.user.id)
+        gid = interaction.guild_id
+        uid = interaction.user.id
+        pts   = get_points(gid, uid)
+        chips = get_chips(gid, uid)
         embed = discord.Embed(
-            title="💎 Твой баланс",
-            description=f"**{pts:,}** 💎".replace(",", "."),
+            title="💰 Твой баланс",
             color=0x2b2d31,
             timestamp=datetime.now(),
         )
-        embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
+        embed.add_field(name="Алмазы", value=f"**{pts:,}** 💎".replace(",", "."), inline=True)
+        embed.add_field(name="Фишки", value=f"**{chips:,}** 🎰".replace(",", "."), inline=True)
+        embed.set_footer(text="MORIARTY", icon_url=_footer(gid))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @ui.button(label="Варны", emoji="⚠️", style=discord.ButtonStyle.secondary, custom_id="cabinet_warns", row=0)
@@ -4630,9 +4727,11 @@ async def voice_reward_loop():
         settings = voice_reward_settings.get(guild.id)
         if not settings:
             continue
-        categories     = settings.get("categories", [])
-        excluded       = set(settings.get("excluded_channels", []))
-        amount         = settings.get("amount", 10)
+        categories   = settings.get("categories", [])
+        excluded     = set(settings.get("excluded_channels", []))
+        amount       = settings.get("amount", 10)
+        amount_game  = settings.get("amount_game", amount)
+        game_name    = settings.get("game_name", "GTA5RP")
 
         if not categories or amount <= 0:
             continue
@@ -4646,26 +4745,112 @@ async def voice_reward_loop():
                 if vc.id in excluded:
                     continue
 
-                # Только реальные (не боты) участники
                 members = [m for m in vc.members if not m.bot]
                 if len(members) < 2:
                     continue
 
-                # Все должны быть не в муте
                 if any(_member_is_muted(m) for m in members):
                     continue
 
-                # Начисляем
                 for m in members:
-                    add_points(guild.id, m.id, amount)
+                    if _member_playing_game(m, game_name):
+                        add_points(guild.id, m.id, amount_game)
 
         save_data()
 
 
+# Счётчик тиков для проверки "в игре, не в войсе"
+_game_check_ticks: dict = {}
+
+
+@tasks.loop(minutes=1)
+async def game_activity_check_loop():
+    global _game_check_ticks
+    for guild in bot.guilds:
+        s = voice_reward_settings.get(guild.id)
+        if not s:
+            continue
+        log_ch_id = s.get("game_log_channel")
+        if not log_ch_id:
+            continue
+        interval = s.get("game_check_interval", 10)
+        game_name = s.get("game_name", "GTA5RP")
+
+        tick = _game_check_ticks.get(guild.id, 0) + 1
+        _game_check_ticks[guild.id] = tick
+        if tick < interval:
+            continue
+        _game_check_ticks[guild.id] = 0
+
+        categories = s.get("categories", [])
+        excluded   = set(s.get("excluded_channels", []))
+
+        # Собираем участников, которые сейчас в отслеживаемых войс-каналах
+        in_voice_ids: set = set()
+        for cat_id in categories:
+            category = guild.get_channel(cat_id)
+            if not category or not isinstance(category, discord.CategoryChannel):
+                continue
+            for vc in category.voice_channels:
+                if vc.id in excluded:
+                    continue
+                for m in vc.members:
+                    if not m.bot:
+                        in_voice_ids.add(m.id)
+
+        # Ищем участников в игре, но не в войсе
+        in_game_not_voice = [
+            m for m in guild.members
+            if not m.bot and m.id not in in_voice_ids and _member_playing_game(m, game_name)
+        ]
+        if not in_game_not_voice:
+            continue
+
+        log_channel = guild.get_channel(log_ch_id)
+        if not log_channel:
+            continue
+
+        lines = "\n".join(f"• {m.mention} ({m.display_name})" for m in in_game_not_voice)
+        embed = discord.Embed(
+            title=f"🎮 В игре, но не в войсе — {game_name}",
+            description=lines,
+            color=discord.Color.orange(),
+            timestamp=datetime.now(),
+        )
+        embed.set_footer(text="MORIARTY")
+        try:
+            await log_channel.send(embed=embed)
+        except Exception:
+            pass
+
+
 def _get_voice_settings(guild_id: int) -> dict:
     if guild_id not in voice_reward_settings:
-        voice_reward_settings[guild_id] = {"categories": [], "excluded_channels": [], "amount": 10}
-    return voice_reward_settings[guild_id]
+        voice_reward_settings[guild_id] = {
+            "categories": [],
+            "excluded_channels": [],
+            "amount": 10,
+            "amount_game": 15,
+            "game_name": "RAGE Multiplayer",
+            "game_log_channel": None,
+            "game_check_interval": 10,
+        }
+    s = voice_reward_settings[guild_id]
+    s.setdefault("amount_game", s.get("amount", 10) + 5)
+    s.setdefault("game_name", "GTA5RP")
+    s.setdefault("game_log_channel", None)
+    s.setdefault("game_check_interval", 10)
+    return s
+
+
+def _member_playing_game(member: discord.Member, game_name: str) -> bool:
+    name_lower = game_name.lower()
+    for act in member.activities:
+        if isinstance(act, discord.Game) and name_lower in act.name.lower():
+            return True
+        if isinstance(act, discord.Activity) and name_lower in act.name.lower():
+            return True
+    return False
 
 
 @tree.command(name="войс_категория", description="Добавить категорию для начисления валюты за голосовые каналы")
@@ -4807,6 +4992,174 @@ async def slash_voice_settings(interaction: discord.Interaction):
     )
     embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+# /активность — панель настройки
+# ─────────────────────────────────────────────
+
+def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
+    s = _get_voice_settings(guild.id)
+    cats = s.get("categories", [])
+    excl = s.get("excluded_channels", [])
+    log_ch_id = s.get("game_log_channel")
+
+    cats_text = (
+        "\n".join(
+            f"• {guild.get_channel(c).name if guild.get_channel(c) else f'[{c}]'}"
+            for c in cats
+        ) or "—"
+    )
+    excl_text = "\n".join(f"• <#{c}>" for c in excl) or "—"
+    log_text  = f"<#{log_ch_id}>" if log_ch_id else "не задан"
+
+    embed = discord.Embed(
+        title="🎙 Настройки активности",
+        color=0x5865F2,
+        timestamp=datetime.now(),
+    )
+    embed.add_field(name="💎 Войс + игра (начисление)", value=f"**{s.get('amount_game', 15)}** /мин", inline=True)
+    embed.add_field(name="ℹ️ Без игры", value="не начисляется", inline=True)
+    embed.add_field(name="🕹 Название игры", value=s.get("game_name", "GTA5RP"), inline=True)
+    embed.add_field(name="🔔 Лог «в игре, не в войсе»", value=log_text, inline=True)
+    embed.add_field(name="⏱ Интервал проверки", value=f"**{s.get('game_check_interval', 10)}** мин", inline=True)
+    embed.add_field(name="​", value="​", inline=True)
+    embed.add_field(name="📂 Категории войса", value=cats_text, inline=False)
+    embed.add_field(name="🚫 Исключённые каналы", value=excl_text, inline=False)
+    embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+    return embed
+
+
+class ActivityRatesModal(ui.Modal, title="💎 Настройки активности"):
+    amount_game = ui.TextInput(
+        label="Алмазы/мин (войс + игра)",
+        placeholder="15",
+        required=True,
+        max_length=6,
+    )
+    game_name = ui.TextInput(
+        label="Название игры (для детекции)",
+        placeholder="RAGE Multiplayer",
+        required=True,
+        max_length=64,
+    )
+    game_check_interval = ui.TextInput(
+        label="Интервал проверки «в игре, не в войсе» (мин)",
+        placeholder="10",
+        required=True,
+        max_length=4,
+    )
+
+    def __init__(self, orig_msg: discord.Message):
+        super().__init__()
+        self._orig = orig_msg
+
+    async def on_submit(self, interaction: discord.Interaction):
+        s = _get_voice_settings(interaction.guild_id)
+        try:
+            s["amount_game"] = max(1, int(str(self.amount_game).strip()))
+        except ValueError:
+            pass
+        s["game_name"] = str(self.game_name).strip() or "GTA5RP"
+        try:
+            s["game_check_interval"] = max(1, int(str(self.game_check_interval).strip()))
+        except ValueError:
+            pass
+        save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
+class ActivityLogChannelSelect(ui.ChannelSelect):
+    def __init__(self, orig_msg: discord.Message):
+        super().__init__(
+            placeholder="📢 Выбрать лог-канал «в игре, не в войсе»",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1,
+            row=1,
+        )
+        self._orig = orig_msg
+
+    async def callback(self, interaction: discord.Interaction):
+        s = _get_voice_settings(interaction.guild_id)
+        s["game_log_channel"] = self.values[0].id
+        save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
+class ActivityCategoryAddSelect(ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="➕ Добавить категорию войса",
+            channel_types=[discord.ChannelType.category],
+            min_values=1,
+            max_values=1,
+            row=2,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        s = _get_voice_settings(interaction.guild_id)
+        cat_id = self.values[0].id
+        if cat_id not in s["categories"]:
+            s["categories"].append(cat_id)
+            save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
+class ActivityCategoryRemoveSelect(ui.Select):
+    def __init__(self, guild: discord.Guild):
+        s = _get_voice_settings(guild.id)
+        options = []
+        for cat_id in s.get("categories", []):
+            ch = guild.get_channel(cat_id)
+            name = ch.name if ch else str(cat_id)
+            options.append(discord.SelectOption(label=name, value=str(cat_id), emoji="➖"))
+        if not options:
+            options = [discord.SelectOption(label="(нет категорий)", value="none", emoji="❌")]
+        super().__init__(placeholder="➖ Убрать категорию войса", options=options, min_values=1, max_values=1, row=3)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.defer()
+        s = _get_voice_settings(interaction.guild_id)
+        cat_id = int(self.values[0])
+        if cat_id in s["categories"]:
+            s["categories"].remove(cat_id)
+            save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
+class ActivityView(ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        self.add_item(ActivityLogChannelSelect(None))
+        self.add_item(ActivityCategoryAddSelect())
+        self.add_item(ActivityCategoryRemoveSelect(guild))
+
+    @ui.button(label="✏️ Ставки и игра", style=discord.ButtonStyle.primary, row=0)
+    async def btn_rates(self, interaction: discord.Interaction, button: ui.Button):
+        s = _get_voice_settings(interaction.guild_id)
+        modal = ActivityRatesModal(None)
+        modal.amount_game.default      = str(s.get("amount_game", 15))
+        modal.game_name.default        = s.get("game_name", "GTA5RP")
+        modal.game_check_interval.default = str(s.get("game_check_interval", 10))
+        await interaction.response.send_modal(modal)
+
+    @ui.button(label="🔕 Убрать лог-канал", style=discord.ButtonStyle.danger, row=0)
+    async def btn_remove_log(self, interaction: discord.Interaction, button: ui.Button):
+        s = _get_voice_settings(interaction.guild_id)
+        s["game_log_channel"] = None
+        save_data()
+        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
+
+
+@tree.command(name="активность", description="Настройки начисления алмазов за голосовую активность")
+async def slash_activity_settings(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    embed = _build_activity_embed(interaction.guild)
+    view  = ActivityView(interaction.guild)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ─────────────────────────────────────────────
@@ -5743,7 +6096,8 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
                 "• `д1` / `1-12` — сектор 1–12 x3\n"
                 "• `д2` / `13-24` — сектор 13–24 x3\n"
                 "• `д3` / `25-36` — сектор 25–36 x3\n\n"
-                f"**Мин. ставка:** {_fmt(ROULETTE_MIN)} 💎\n\n"
+                f"**Мин. ставка:** {_fmt(ROULETTE_MIN)} 🎰\n\n"
+                "**Ставки в фишках** (обмен: `!обмен <сумма>`)\n\n"
                 "**Примеры:**\n"
                 "`!рулетка красное 100`\n"
                 "`!рулетка 17 50`\n"
@@ -5777,13 +6131,14 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
         return await ctx.send("❌ Сумма должна быть целым числом.", delete_after=6)
 
     if stake < ROULETTE_MIN:
-        return await ctx.send(f"❌ Минимальная ставка — **{_fmt(ROULETTE_MIN)}** 💎", delete_after=6)
+        return await ctx.send(f"❌ Минимальная ставка — **{_fmt(ROULETTE_MIN)}** 🎰", delete_after=6)
 
-    balance = get_points(guild_id, user_id)
+    balance = get_chips(guild_id, user_id)
     if balance < stake:
         return await ctx.send(
-            f"❌ Недостаточно баллов! Нужно **{_fmt(stake)}** 💎, у вас **{_fmt(balance)}** 💎",
-            delete_after=8,
+            f"❌ Недостаточно фишек! Нужно **{_fmt(stake)}** 🎰, у вас **{_fmt(balance)}** 🎰\n"
+            f"Обменяй алмазы на фишки: `!обмен <сумма>`",
+            delete_after=10,
         )
 
     # Ставка принята — ставим кулдаун
@@ -5824,19 +6179,19 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
         payout    = stake * 3 if won else 0
 
     profit_delta = payout - stake
-    add_points(guild_id, user_id, profit_delta)
+    add_chips(guild_id, user_id, profit_delta)
     _update_stats(guild_id, user_id, won, profit_delta)
 
-    new_balance = get_points(guild_id, user_id)
+    new_balance = get_chips(guild_id, user_id)
 
     if won:
         result_color_embed = discord.Color.green()
         result_title = "🎉 ПОБЕДА!"
-        result_text  = f"**+{_fmt(payout)}** 💎"
+        result_text  = f"**+{_fmt(payout)}** 🎰"
     else:
         result_color_embed = discord.Color.red()
         result_title = "💸 ПРОИГРЫШ"
-        result_text  = f"**-{_fmt(stake)}** 💎"
+        result_text  = f"**-{_fmt(stake)}** 🎰"
 
     final_embed = discord.Embed(
         title=f"🎰 РУЛЕТКА — {result_title}",
@@ -5845,7 +6200,7 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
     )
     final_embed.add_field(
         name="Ставка",
-        value=f"**{_fmt(stake)}** 💎 на {bet_label}",
+        value=f"**{_fmt(stake)}** 🎰 на {bet_label}",
         inline=True,
     )
     final_embed.add_field(
@@ -5859,8 +6214,8 @@ async def roulette_cmd(ctx, bet_type: str = None, amount: str = None):
         inline=True,
     )
     final_embed.add_field(
-        name="Баланс",
-        value=f"**{_fmt(new_balance)}** 💎",
+        name="Фишки",
+        value=f"**{_fmt(new_balance)}** 🎰",
         inline=False,
     )
     final_embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))

@@ -42,5 +42,14 @@ chips_data["chips"] = chips
 with open(CHIPS_FILE, "w", encoding="utf-8") as f:
     json.dump(chips_data, f, ensure_ascii=False)
 
+# Обнуляем алмазы
+for g_str in diamonds:
+    for u_str in diamonds[g_str]:
+        diamonds[g_str][u_str] = 0
+
+points_data["points"] = diamonds
+with open(POINTS_FILE, "w", encoding="utf-8") as f:
+    json.dump(points_data, f, ensure_ascii=False)
+
 print(f"\n✅ Готово: {total_users} участников, итого {total_chips} 🎰 начислено.")
-print(f"   Алмазы 💎 не тронуты. Фишки сохранены в {CHIPS_FILE}")
+print(f"   Алмазы 💎 обнулены. Фишки сохранены в {CHIPS_FILE}")

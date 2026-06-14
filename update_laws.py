@@ -20,10 +20,12 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
 DB_FILE = "laws.sqlite"
+RAW_DIR = Path("laws_raw")  # человекочитаемые .md копии, попадают в git
 FORUM_BASE = "https://forum.gta5rp.com"
 THREAD_URL = FORUM_BASE + "/threads/{slug}.{tid}/"
 
@@ -259,6 +261,34 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def write_markdown(tid: int, slug: str, name: str, url: str,
+                   text: str, chunks: list[tuple[str, str]], scraped_at: str) -> Path:
+    """Сохраняет человекочитаемую копию темы для git."""
+    RAW_DIR.mkdir(exist_ok=True)
+    short_slug = slug[:60].rstrip("-")
+    path = RAW_DIR / f"{tid}_{short_slug}.md"
+
+    lines = [
+        f"# {name}",
+        "",
+        f"- **Thread ID**: {tid}",
+        f"- **URL**: {url}",
+        f"- **Скрейп**: {scraped_at}",
+        f"- **Чанков**: {len(chunks)}",
+        f"- **Длина текста**: {len(text)} символов",
+        "",
+        "---",
+        "",
+    ]
+    for code, body in chunks:
+        lines.append(f"## {code}")
+        lines.append("")
+        lines.append(body)
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def replace_thread(conn: sqlite3.Connection, thread_id: int, rows: list[dict]) -> int:
     conn.execute("DELETE FROM laws WHERE thread_id = ?", (thread_id,))
     conn.executemany(
@@ -298,6 +328,8 @@ def process_thread(conn: sqlite3.Connection, tid: int, slug: str, name: str) -> 
         )
         for code, body in chunks
     ]
+    md_path = write_markdown(tid, slug, name, post_url, text, chunks, now)
+    print(f"    md: {md_path}")
     return replace_thread(conn, tid, rows)
 
 

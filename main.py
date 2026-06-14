@@ -300,6 +300,13 @@ intents.reactions = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+# Юр-ассистент Murrieta (модуль laws_module.py)
+try:
+    from laws_module import setup_laws
+    setup_laws(bot)
+except Exception as _laws_err:
+    print(f"[laws_module] не подключён: {_laws_err}")
+
 
 # ─────────────────────────────────────────────
 # HELPERS

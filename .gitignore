@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+laws.sqlite
+laws_config.json
+laws_usage.json

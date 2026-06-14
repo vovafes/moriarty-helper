@@ -63,8 +63,21 @@ THREADS = [
     (3237179, "zakon-o-politicheskix-partijax-v-shtate-san-andreas", "Закон «О политических партиях»"),
     (3237178, "zakon-o-jurisdikcii", "Закон «О юрисдикции»"),
     (3237176, "zakon-o-sluzhbe-sudebnyx-marshalov-ssha-usms", "Закон «О USMS»"),
-    (3237175, "sudebnye-precedenty-i-tolkovanija", "Судебные прецеденты и толкования"),
     (3237170, "zakon-ob-upravlenii-gosudarstvennoi-sobstvennostju", "Закон «Об управлении гос. собственностью»"),
+]
+
+# Темы со множеством постов и мусором — обходим все страницы и фильтруем по автору.
+# include_first_post=True означает что первый пост (обычно оглавление) берём всегда,
+# независимо от author_filter.
+MULTI_THREADS = [
+    {
+        "tid": 3347921,
+        "slug": "sudebnye-precedenty-i-tolkovanija",
+        "name": "Судебные прецеденты и толкования",
+        "author_filter": "Luis_Kalimator",
+        "include_first_post": True,
+        "max_pages": 50,
+    },
 ]
 
 # Максимальный размер чанка (в символах) при дроблении длинных документов.
@@ -104,22 +117,8 @@ def fetch(url: str, retries: int = 3) -> str:
 # Парсинг XenForo
 # ──────────────────────────────────────────────────────────────
 
-def extract_first_post_text(html: str) -> tuple[str, str | None]:
-    """
-    Достаёт текст первого поста темы XenForo.
-    Возвращает (text, post_anchor) где post_anchor вида 'post-8856297' для ссылок.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    article = soup.select_one("article.message.message--post")
-    if not article:
-        raise RuntimeError("Не найден первый пост: article.message--post")
-
-    anchor = article.get("data-content")  # 'post-XXXXXXX'
-
-    bb = article.select_one(".bbWrapper")
-    if not bb:
-        raise RuntimeError("Не найден .bbWrapper в первом посте")
-
+def _post_bbwrapper_to_text(bb) -> str:
+    """Конвертирует .bbWrapper элемент в чистый текст с переводами строк."""
     # Убираем скрипты, стили, картинки
     for tag in bb.select("script, style, img, .bbCodeBlock-title"):
         tag.decompose()
@@ -134,9 +133,76 @@ def extract_first_post_text(html: str) -> tuple[str, str | None]:
     for tag in bb.find_all(["td", "th"]):
         tag.append(" | ")
 
-    text = bb.get_text()
-    text = clean_text(text)
-    return text, anchor
+    return clean_text(bb.get_text())
+
+
+def extract_first_post_text(html: str) -> tuple[str, str | None]:
+    """
+    Достаёт текст первого поста темы XenForo.
+    Возвращает (text, post_anchor) где post_anchor вида 'post-8856297' для ссылок.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    article = soup.select_one("article.message.message--post")
+    if not article:
+        raise RuntimeError("Не найден первый пост: article.message--post")
+
+    anchor = article.get("data-content")  # 'post-XXXXXXX'
+    bb = article.select_one(".bbWrapper")
+    if not bb:
+        raise RuntimeError("Не найден .bbWrapper в первом посте")
+    return _post_bbwrapper_to_text(bb), anchor
+
+
+def extract_all_posts(html: str) -> list[dict]:
+    """
+    Извлекает все посты со страницы XenForo.
+    Возвращает [{'author': str, 'anchor': str, 'text': str, 'is_first_on_page': bool}].
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    posts = []
+    for idx, article in enumerate(soup.select("article.message.message--post")):
+        bb = article.select_one(".bbWrapper")
+        if not bb:
+            continue
+        author = article.get("data-author") or ""
+        anchor = article.get("data-content") or ""
+        text = _post_bbwrapper_to_text(bb)
+        posts.append({
+            "author": author,
+            "anchor": anchor,
+            "text": text,
+            "is_first_on_page": idx == 0,
+        })
+    return posts
+
+
+def extract_max_page(html: str) -> int:
+    """Сколько страниц в теме (по pageNav). Возвращает 1 если пагинации нет."""
+    # XenForo: <li class="pageNav-page"><a href=".../page-N">N</a></li>
+    nums = re.findall(r'href="[^"]*?/page-(\d+)', html)
+    if not nums:
+        return 1
+    return max(int(n) for n in nums)
+
+
+PRECEDENT_HEADER = re.compile(
+    r"(Прецедент\s*№\s*\d+|Решение\s+Верховного\s+Суда|Толкование\s*№\s*\d+|"
+    r"Постановление\s*№\s*\d+|Дело\s*№\s*\d+|Апелляция\s*№\s*\d+)",
+    re.IGNORECASE,
+)
+
+
+def derive_post_code(text: str, fallback: str) -> str:
+    """Достаём короткий код-заголовок поста-прецедента."""
+    m = PRECEDENT_HEADER.search(text)
+    if m:
+        return m.group(1).strip()
+    # Первая непустая строка, обрезанная
+    for line in text.splitlines():
+        line = line.strip()
+        if len(line) >= 5:
+            return line[:80]
+    return fallback
 
 
 def clean_text(text: str) -> str:
@@ -304,6 +370,93 @@ def replace_thread(conn: sqlite3.Connection, thread_id: int, rows: list[dict]) -
 # Pipeline
 # ──────────────────────────────────────────────────────────────
 
+def process_multipage_thread(conn: sqlite3.Connection, spec: dict) -> int:
+    """
+    Обходит все страницы темы, фильтрует посты по автору (и опционально берёт
+    первый пост целиком как оглавление). Каждый пост → отдельный чанк.
+    """
+    tid = spec["tid"]
+    slug = spec["slug"]
+    name = spec["name"]
+    author_filter = spec.get("author_filter")
+    include_first = spec.get("include_first_post", True)
+    max_pages = spec.get("max_pages", 50)
+
+    base_url = THREAD_URL.format(slug=slug, tid=tid)
+    print(f"  ↻ {name}  [multi-page]")
+    print(f"    {base_url}")
+    print(f"    Фильтр: автор={author_filter or 'все'}, include_first={include_first}")
+
+    # Страница 1 — определяем количество страниц
+    html = fetch(base_url)
+    n_pages = min(extract_max_page(html), max_pages)
+    print(f"    Страниц: {n_pages}")
+
+    all_posts: list[dict] = []
+    first_page_posts = extract_all_posts(html)
+    all_posts.extend(first_page_posts)
+
+    for p in range(2, n_pages + 1):
+        time.sleep(0.6)
+        page_url = base_url + f"page-{p}"
+        page_html = fetch(page_url)
+        page_posts = extract_all_posts(page_html)
+        # На дополнительных страницах первый пост — НЕ оглавление темы
+        for post in page_posts:
+            post["is_first_on_page"] = False
+        all_posts.extend(page_posts)
+        print(f"    стр. {p}: +{len(page_posts)} постов")
+
+    # Фильтрация: сохраняем самый первый пост темы (оглавление)
+    # и все посты от author_filter
+    kept: list[dict] = []
+    for i, post in enumerate(all_posts):
+        is_thread_first = (i == 0)
+        if is_thread_first and include_first:
+            kept.append(post)
+        elif author_filter is None or post["author"] == author_filter:
+            # Игнорируем совсем короткие реплики (< 100 символов)
+            if len(post["text"]) >= 100:
+                kept.append(post)
+
+    print(f"    Постов всего: {len(all_posts)}, оставлено после фильтра: {len(kept)}")
+
+    chunks: list[tuple[str, str]] = []
+    for i, post in enumerate(kept):
+        is_thread_first = (i == 0 and include_first)
+        if is_thread_first:
+            code = "Оглавление"
+        else:
+            code = derive_post_code(post["text"], fallback=f"Пост #{i}")
+        body = post["text"]
+        # Если пост очень большой — режем по размеру (на статьи прецеденты не делятся)
+        if len(body) > CHUNK_SIZE * 1.5:
+            for sub_code, sub_body in _chunk_by_size(body, default_code=code):
+                chunks.append((sub_code, sub_body))
+        else:
+            chunks.append((code, body))
+
+    now = datetime.now().isoformat(timespec="seconds")
+    # URL первого поста темы как канонический
+    first_anchor = all_posts[0]["anchor"] if all_posts else ""
+    canonical_url = f"{base_url}#{first_anchor}" if first_anchor else base_url
+    rows = [
+        dict(
+            thread_id=tid,
+            law_name=name,
+            article_code=code,
+            body=body,
+            url=canonical_url,
+            scraped_at=now,
+        )
+        for code, body in chunks
+    ]
+    md_path = write_markdown(tid, slug, name, canonical_url,
+                             "\n\n".join(c[1] for c in chunks), chunks, now)
+    print(f"    md: {md_path}")
+    return replace_thread(conn, tid, rows)
+
+
 def process_thread(conn: sqlite3.Connection, tid: int, slug: str, name: str) -> int:
     url = THREAD_URL.format(slug=slug, tid=tid)
     print(f"  ↻ {name}")
@@ -357,18 +510,23 @@ def main() -> int:
         print(f"\nИтого: {total} записей в {len(rows)} документах")
         return 0
 
-    targets = THREADS
+    single_targets = list(THREADS)
+    multi_targets = list(MULTI_THREADS)
     if args.thread:
-        targets = [t for t in THREADS if t[0] == args.thread]
-        if not targets:
-            print(f"Тема {args.thread} не найдена в списке.")
+        single_targets = [t for t in THREADS if t[0] == args.thread]
+        multi_targets = [t for t in MULTI_THREADS if t["tid"] == args.thread]
+        if not single_targets and not multi_targets:
+            print(f"Тема {args.thread} не найдена ни в THREADS, ни в MULTI_THREADS.")
             return 1
 
-    print(f"Обновляю {len(targets)} тем...\n")
+    total = len(single_targets) + len(multi_targets)
+    print(f"Обновляю {total} тем ({len(single_targets)} одностраничных, "
+          f"{len(multi_targets)} многостраничных)...\n")
     ok = 0
     fail = 0
     total_chunks = 0
-    for tid, slug, name in targets:
+
+    for tid, slug, name in single_targets:
         try:
             n = process_thread(conn, tid, slug, name)
             total_chunks += n
@@ -377,7 +535,18 @@ def main() -> int:
         except Exception as e:
             fail += 1
             print(f"    ✗ ОШИБКА: {e}\n")
-        time.sleep(0.6)  # уважение к форуму
+        time.sleep(0.6)
+
+    for spec in multi_targets:
+        try:
+            n = process_multipage_thread(conn, spec)
+            total_chunks += n
+            ok += 1
+            print(f"    ✓ записано {n} чанков\n")
+        except Exception as e:
+            fail += 1
+            print(f"    ✗ ОШИБКА: {e}\n")
+        time.sleep(0.6)
 
     print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"Готово: {ok} OK, {fail} ошибок, {total_chunks} чанков всего.")

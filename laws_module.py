@@ -261,7 +261,7 @@ async def ask_groq(question: str, chunks: list[dict], model: str) -> tuple[str, 
         max_tokens=MAX_ANSWER_TOKENS,
     )
     headers = dict(raw.headers)
-    completion = raw.parse()
+    completion = await raw.parse()
     answer = completion.choices[0].message.content or ""
     u = getattr(completion, "usage", None)
     usage = {

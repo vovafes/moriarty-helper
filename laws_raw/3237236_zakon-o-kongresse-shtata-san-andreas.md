@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237236
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-kongresse-shtata-san-andreas.3237236/#post-8856262
-- **Скрейп**: 2026-06-14T22:19:00
+- **Скрейп**: 2026-06-16T16:12:13
 - **Чанков**: 34
 - **Длина текста**: 24851 символов
 

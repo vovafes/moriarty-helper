@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237220
 - **URL**: https://forum.gta5rp.com/threads/zakon-ob-osobyx-rezhimax-i-protokolax-zaschity-v-shtate-san-andreas.3237220/#post-8856225
-- **Скрейп**: 2026-06-14T22:19:04
+- **Скрейп**: 2026-06-16T16:12:16
 - **Чанков**: 33
 - **Длина текста**: 18660 символов
 

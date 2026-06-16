@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237252
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-pravitelstve-shtata-san-andreas.3237252/#post-8856293
-- **Скрейп**: 2026-06-14T22:18:51
+- **Скрейп**: 2026-06-16T16:12:06
 - **Чанков**: 75
 - **Длина текста**: 22942 символов
 

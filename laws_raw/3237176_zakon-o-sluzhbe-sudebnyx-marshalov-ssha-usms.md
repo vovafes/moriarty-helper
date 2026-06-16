@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237176
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-sluzhbe-sudebnyx-marshalov-ssha-usms.3237176/#post-8856140
-- **Скрейп**: 2026-06-14T22:19:25
+- **Скрейп**: 2026-06-16T16:12:31
 - **Чанков**: 49
 - **Длина текста**: 15536 символов
 

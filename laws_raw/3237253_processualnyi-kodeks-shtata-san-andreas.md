@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237253
 - **URL**: https://forum.gta5rp.com/threads/processualnyi-kodeks-shtata-san-andreas.3237253/#post-8856294
-- **Скрейп**: 2026-06-14T22:18:49
+- **Скрейп**: 2026-06-16T16:12:05
 - **Чанков**: 36
 - **Длина текста**: 44451 символов
 

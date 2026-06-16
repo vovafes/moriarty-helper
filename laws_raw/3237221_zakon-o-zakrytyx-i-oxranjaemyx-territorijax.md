@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237221
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-zakrytyx-i-oxranjaemyx-territorijax.3237221/#post-8856226
-- **Скрейп**: 2026-06-14T22:19:02
+- **Скрейп**: 2026-06-16T16:12:15
 - **Чанков**: 11
 - **Длина текста**: 8005 символов
 

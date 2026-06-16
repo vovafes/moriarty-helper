@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237251
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-prokurature-shtata-san-andreas.3237251/#post-8856292
-- **Скрейп**: 2026-06-14T22:18:52
+- **Скрейп**: 2026-06-16T16:12:07
 - **Чанков**: 83
 - **Длина текста**: 27725 символов
 

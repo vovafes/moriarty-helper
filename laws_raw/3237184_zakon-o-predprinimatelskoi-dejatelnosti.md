@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237184
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-predprinimatelskoi-dejatelnosti.3237184/#post-8856155
-- **Скрейп**: 2026-06-14T22:19:17
+- **Скрейп**: 2026-06-16T16:12:25
 - **Чанков**: 16
 - **Длина текста**: 28212 символов
 

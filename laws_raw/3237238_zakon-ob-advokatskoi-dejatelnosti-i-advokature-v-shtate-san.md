@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237238
 - **URL**: https://forum.gta5rp.com/threads/zakon-ob-advokatskoi-dejatelnosti-i-advokature-v-shtate-san-andreas.3237238/#post-8856264
-- **Скрейп**: 2026-06-14T22:18:58
+- **Скрейп**: 2026-06-16T16:12:12
 - **Чанков**: 22
 - **Длина текста**: 21685 символов
 

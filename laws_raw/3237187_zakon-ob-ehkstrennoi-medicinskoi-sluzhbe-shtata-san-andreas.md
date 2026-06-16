@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237187
 - **URL**: https://forum.gta5rp.com/threads/zakon-ob-ehkstrennoi-medicinskoi-sluzhbe-shtata-san-andreas-ems.3237187/#post-8856159
-- **Скрейп**: 2026-06-14T22:19:13
+- **Скрейп**: 2026-06-16T16:12:23
 - **Чанков**: 33
 - **Длина текста**: 13932 символов
 

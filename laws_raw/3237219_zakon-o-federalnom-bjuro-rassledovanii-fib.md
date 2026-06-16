@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237219
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-federalnom-bjuro-rassledovanii-fib.3237219/#post-8856223
-- **Скрейп**: 2026-06-14T22:19:04
+- **Скрейп**: 2026-06-16T16:12:17
 - **Чанков**: 29
 - **Длина текста**: 23366 символов
 

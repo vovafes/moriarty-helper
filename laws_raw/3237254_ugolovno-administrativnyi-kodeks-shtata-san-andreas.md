@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237254
 - **URL**: https://forum.gta5rp.com/threads/ugolovno-administrativnyi-kodeks-shtata-san-andreas.3237254/#post-8856296
-- **Скрейп**: 2026-06-14T22:18:48
+- **Скрейп**: 2026-06-16T16:12:04
 - **Чанков**: 42
 - **Длина текста**: 40500 символов
 

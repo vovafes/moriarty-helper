@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237237
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-statuse-neprikosnovennosti-dolzhnostnyx-lic-v-shtate-san-andreas.3237237/#post-8856263
-- **Скрейп**: 2026-06-14T22:18:59
+- **Скрейп**: 2026-06-16T16:12:13
 - **Чанков**: 13
 - **Длина текста**: 5504 символов
 

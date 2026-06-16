@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237218
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-policeiskom-departamente-goroda-los-santos-lspd.3237218/#post-8856222
-- **Скрейп**: 2026-06-14T22:19:06
+- **Скрейп**: 2026-06-16T16:12:18
 - **Чанков**: 31
 - **Длина текста**: 19766 символов
 

@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237180
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-ljubitelskom-i-professionalnom-rybolovstve-i-oxote.3237180/#post-8856149
-- **Скрейп**: 2026-06-14T22:19:22
+- **Скрейп**: 2026-06-16T16:12:28
 - **Чанков**: 29
 - **Длина текста**: 7831 символов
 

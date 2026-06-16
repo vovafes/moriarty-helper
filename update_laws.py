@@ -64,6 +64,47 @@ THREADS = [
     (3237178, "zakon-o-jurisdikcii", "Закон «О юрисдикции»"),
     (3237176, "zakon-o-sluzhbe-sudebnyx-marshalov-ssha-usms", "Закон «О USMS»"),
     (3237170, "zakon-ob-upravlenii-gosudarstvennoi-sobstvennostju", "Закон «Об управлении гос. собственностью»"),
+
+    # ─── Общие правила сервера (forum 1699) ───
+    (3237321, "pravila-servera-murrieta", "Правила сервера Murrieta"),
+    (3237311, "pravila-i-objazannosti-liderov", "Правила и обязанности лидеров"),
+    (3237309, "pravila-zelenyx-zon", "Правила Зелёных Зон"),
+
+    # ─── Правила для государственных организаций (forum 1700) ───
+    (3237046, "pravila-gosudarstvennyx-struktur", "Правила государственных структур"),
+    (3404104, "polozhenie-o-vneshnem-vide-gos-sotrudnikov", "Положение о внешнем виде гос. сотрудников"),
+    (3259111, "monopolist", "MONOPOLIST (правила гос. структур)"),
+    (3237079, "nonrp-deistvija-dlja-sotrudnikov-gosudarstvennyx-struktur", "NonRP действия для сотрудников гос. структур"),
+    (3237045, "pravila-provedenija-doprosov", "Правила проведения допросов (гос.)"),
+    (3237044, "pravila-reidov", "Правила рейдов"),
+    (3237043, "pravila-vnedrenii-v-kriminalnye-organizacii", "Правила внедрений в криминальные организации"),
+    (3237033, "pravila-snjatija-liderov-gosudarstvennyx-struktur", "Правила снятия лидеров гос. структур"),
+
+    # ─── Правила для криминальных организаций (forum 1701) ───
+    (3237100, "pravila-kriminalnyx-frakcii", "Правила криминальных фракций"),
+    (3237087, "titulnye-raiony", "Титульные районы (крим.)"),
+    (3251104, "pravila-kazny-i-sklada-kriminalnyx-frakcii", "Правила казны и склада крим. фракций"),
+    (3237099, "pravila-provedenija-doprosov-dlja-kriminalnyx-frakcii", "Правила проведения допросов (крим.)"),
+    (3237097, "pravila-ograblenija-ammunation-poezda", "Правила ограбления Ammunation и поезда"),
+    (3237096, "pravila-ograblenii-poxischenii", "Правила ограблений и похищений"),
+    (3237095, "pravila-napadenija-na-fort-zankudo-saspa", "Правила нападения на Форт Занкудо и SASPA"),
+    (3237094, "pravila-bizvarov", "Правила бизваров"),
+    (3237090, "pravila-kaptov", "Правила каптов"),
+    (3237089, "pravila-voiny-za-graffiti", "Правила Войны за Граффити"),
+    (3237086, "pravila-zaxvata-gosudarstvennyx-organizacii", "Правила захвата гос. организаций"),
+    (3237084, "pravila-voiny-za-xammery", "Правила Войны за Хаммеры"),
+    # Ивенты и механики
+    (3345574, "battle-pass", "Battle Pass (механика)"),
+    (3405518, "kriminalnyi-perepolox", "Криминальный переполох (ивент)"),
+    (3387384, "territorija-x", "Территория X (ивент)"),
+    (3387366, "bolshoi-ugon", "Большой угон (ивент)"),
+    (3287683, "ograblenie-po-amerikanski", "Ограбление по-американски (ивент)"),
+    (3254769, "rehket-klubov", "Рэкет клубов (ивент)"),
+
+    # ─── Правила для неофициальных организаций (forum 1702) ───
+    (3237141, "titulnye-raiony-neoficialnyx-organizacii", "Титульные районы (неофиц.)"),
+    (3237139, "pravila-dlja-organizacii-s-funkcionalnymi-razreshenijami", "Правила для организаций с функц. разрешениями"),
+    (3237137, "voina-semei-zaxvat-kaio-periko-tochki-vlijanija", "Война семей / Захват Кайо-Перико / Точки влияния"),
 ]
 
 # Темы со множеством постов и мусором — обходим все страницы и фильтруем по автору.

@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237222
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-regulirovanii-oborota-oruzhija-boepripasov-i-specsredstv-v-shtate-san-andreas.3237222/#post-8856227
-- **Скрейп**: 2026-06-14T22:19:01
+- **Скрейп**: 2026-06-16T16:12:14
 - **Чанков**: 41
 - **Длина текста**: 18249 символов
 

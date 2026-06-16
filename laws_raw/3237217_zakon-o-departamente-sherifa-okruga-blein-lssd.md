@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237217
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-departamente-sherifa-okruga-blein-lssd.3237217/#post-8856220
-- **Скрейп**: 2026-06-14T22:19:07
+- **Скрейп**: 2026-06-16T16:12:19
 - **Чанков**: 28
 - **Длина текста**: 16188 символов
 

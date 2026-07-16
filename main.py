@@ -228,8 +228,8 @@ obshak_log_channels: dict = {}
 # { guild_id: role_id }  — роль для тега в логах общака
 obshak_ping_roles: dict = {}
 
-# { guild_id: channel_id }  — голосовой канал для автоподключения при старте
-voice_autoconnect: dict = {}
+# { ticket_text_channel_id: voice_channel_id } — войс для обзвона по заявке
+ticket_voice_channels: dict = {}
 
 # { guild_id: [ { "user_id": int, "amount": int, "date": str (ISO) } ] }
 obshak_deposits: dict = {}
@@ -328,6 +328,14 @@ def format_amount(amount: int) -> str:
 
 
 
+def _format_reserve_block(reserve: list | None) -> str:
+    reserve = reserve or []
+    if not reserve:
+        return f"\n\n**🪑 Резерв (0):**\n*пусто*"
+    lines = [f"`R{str(i).zfill(2)}.` <@{uid}>" for i, uid in enumerate(reserve, 1)]
+    return f"\n\n**🪑 Резерв ({len(reserve)}):**\n" + "\n".join(lines)
+
+
 def build_event_embed(
     guild_id: int,
     title: str,
@@ -338,6 +346,7 @@ def build_event_embed(
     join_mode: bool = False,
     event_time: str = None,
     closed: bool = False,
+    reserve: list | None = None,
 ) -> discord.Embed:
     filled = sum(1 for v in slots.values() if v is not None)
     if closed:
@@ -345,22 +354,24 @@ def build_event_embed(
     else:
         color = discord.Color.red() if filled >= max_count else discord.Color.green()
 
-    prefix = ""
-    if event_time:
-        prefix += f"🕐 **Время:** `{event_time}`\n"
-    if closed:
-        prefix += "🔒 **СПИСОК ЗАКРЫТ**\n"
-
     lines = []
     for i in range(1, max_count + 1):
         uid = slots.get(i)
         lines.append(f"`{str(i).zfill(2)}.` {'<@' + str(uid) + '>' if uid else '*свободно*'}")
 
     text = "\n".join(lines)
+    prefix = ""
+    if event_time:
+        prefix += f"🕐 **Время:** `{event_time}`\n"
+    if closed:
+        prefix += "🔒 **СПИСОК ЗАКРЫТ**\n"
+    if prefix:
+        prefix += "\n"
     if join_mode:
-        description = f"{prefix}Нажми ✅ чтобы записаться\n\n**Участники ({filled}/{max_count}):**\n{text}"
+        description = f"{prefix}Нажми ✅ чтобы записаться · 🪑 резерв если места заняты\n\n**Участники ({filled}/{max_count}):**\n{text}"
     else:
-        description = f"{prefix}Нажми кнопку с нужным номером слота\n\n**Слоты ({filled}/{max_count}):**\n{text}"
+        description = f"{prefix}Нажми кнопку слота · 🪑 **Резерв** — запасной список\n\n**Слоты ({filled}/{max_count}):**\n{text}"
+    description += _format_reserve_block(reserve)
     if note:
         description += f"\n\n📌 **Заметка:** {note}"
 
@@ -376,13 +387,21 @@ def build_event_embed(
     return embed
 
 
-def build_thread_list(title: str, max_count: int, slots: dict) -> str:
+def build_thread_list(title: str, max_count: int, slots: dict, reserve: list | None = None) -> str:
     filled = sum(1 for v in slots.values() if v is not None)
     lines  = [f"**📋 Список: {title} ({filled}/{max_count})**\n"]
     for i in range(1, max_count + 1):
         uid = slots.get(i)
         lines.append(f"`{str(i).zfill(2)}.` {'<@' + str(uid) + '>' if uid else 'свободно'}")
+    reserve = reserve or []
+    lines.append(f"\n**🪑 Резерв ({len(reserve)}):**")
+    if reserve:
+        for i, uid in enumerate(reserve, 1):
+            lines.append(f"`R{str(i).zfill(2)}.` <@{uid}>")
+    else:
+        lines.append("*пусто*")
     return "\n".join(lines)
+
 
 
 async def update_thread_list(message_id: int):
@@ -626,7 +645,7 @@ def save_data():
             "vzp_roles2":           {str(g): v for g, v in vzp_roles2.items()},
             "mp_roles2":            {str(g): v for g, v in mp_roles2.items()},
             "list_roles2":          {str(g): v for g, v in list_roles2.items()},
-            "voice_autoconnect":    {str(g): v for g, v in voice_autoconnect.items()},
+            "ticket_voice_channels": {str(c): v for c, v in ticket_voice_channels.items()},
             "vzp_monitor_config":   {str(g): v for g, v in vzp_monitor_config.items()},
             "vzp_processed_events": {str(g): v for g, v in vzp_processed_events.items()},
             "casino_role_luck":     {str(g): {str(r): v for r, v in roles.items()} for g, roles in casino_role_luck.items()},
@@ -749,8 +768,8 @@ def load_data():
             mp_roles2[int(g)] = v
         for g, v in data.get("list_roles2", {}).items():
             list_roles2[int(g)] = v
-        for g, v in data.get("voice_autoconnect", {}).items():
-            voice_autoconnect[int(g)] = v
+        for c, v in data.get("ticket_voice_channels", {}).items():
+            ticket_voice_channels[int(c)] = int(v)
         for g, v in data.get("vzp_monitor_config", {}).items():
             vzp_monitor_config[int(g)] = v
         for g, v in data.get("vzp_processed_events", {}).items():
@@ -1464,6 +1483,59 @@ class ApplicationReviewView(ui.View):
         )
         close_embed.set_footer(text=f"MORIARTY • {applicant_id}", icon_url=_footer(interaction.guild_id))
         await channel.send(embed=close_embed, view=PostCloseView())
+
+    @ui.button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, custom_id="ticket_invite_voice")
+    async def invite_voice(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_ticket_manager(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+        
+        await interaction.response.defer(ephemeral=True)
+        applicant_id = self._get_applicant_id(interaction.message)
+        guild = interaction.guild
+        
+        try:
+            # Создание голосового канала
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(connect=False),
+                interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True),
+            }
+            
+            # Поиск роли менеджера для доступа к каналу
+            tm_role_id = ticket_manager_roles.get(guild.id)
+            if tm_role_id:
+                tm_role = guild.get_role(tm_role_id)
+                if tm_role:
+                    overwrites[tm_role] = discord.PermissionOverwrite(connect=True)
+            
+            voice_channel = await guild.create_voice_channel(
+                name=f"Обзвон-тикет-{applicant_id}",
+                overwrites=overwrites
+            )
+            
+            # Сохранение связи тикет <-> войс (если нужно для дальнейшего использования)
+            # В main.py есть словарь ticket_voice_channels: { text_channel_id: voice_channel_id }
+            ticket_voice_channels[interaction.channel.id] = voice_channel.id
+            
+            # Отправка DM пользователю
+            try:
+                target = await interaction.client.fetch_user(applicant_id)
+                invite = await voice_channel.create_invite(max_age=3600)
+                dm_embed = discord.Embed(
+                    title="🎙 Приглашение на обзвон",
+                    description=f"Вас приглашают на обзвон в канале {voice_channel.mention}!\n\nСсылка: {invite.url}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(),
+                )
+                dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+                await target.send(embed=dm_embed)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Не удалось отправить DM пользователю: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"✅ Голосовой канал создан и приглашение отправлено в DM {applicant_id}.", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при создании голосового канала: {e}", ephemeral=True)
+
 
     @ui.button(label="❌ Отклонить", style=discord.ButtonStyle.danger, custom_id="ticket_reject")
     async def reject(self, interaction: discord.Interaction, button: ui.Button):
@@ -3995,13 +4067,6 @@ async def on_ready():
         if guild:
             await _refresh_roster(guild)
 
-    # Подключение к голосовым каналам при старте
-    for gid, ch_id in list(voice_autoconnect.items()):
-        try:
-            ch = bot.get_channel(ch_id)
-            if ch and isinstance(ch, discord.VoiceChannel):
-                await ch.connect()
-        except Exception as e:
             print(f"WARNING: Could not auto-connect to voice channel {ch_id}: {e}")
 
 
@@ -5000,23 +5065,6 @@ async def slash_voice_amount(interaction: discord.Interaction, сумма: int):
     save_data()
     await interaction.response.send_message(
         f"✅ Начисление: **{сумма}** 💎 в минуту за активность в войсе.", ephemeral=True
-    )
-
-
-@tree.command(name="войс_авто", description="Установить голосовой канал для автоподключения бота при старте (пусто — отключить)")
-@app_commands.describe(канал="Голосовой канал для автоподключения (не указывать — сбросить)")
-async def slash_voice_autoconnect(interaction: discord.Interaction, канал: discord.VoiceChannel = None):
-    if not is_admin(interaction):
-        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
-    gid = interaction.guild_id
-    if канал is None:
-        voice_autoconnect.pop(gid, None)
-        save_data()
-        return await interaction.response.send_message("✅ Автоподключение к войсу отключено.", ephemeral=True)
-    voice_autoconnect[gid] = канал.id
-    save_data()
-    await interaction.response.send_message(
-        f"✅ Бот будет автоматически подключаться к **{канал.name}** при запуске.", ephemeral=True
     )
 
 

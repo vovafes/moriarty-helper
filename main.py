@@ -965,17 +965,19 @@ class JoinButton(ui.Button):
         )
         self.message_id = message_id
 
+    @ui.button(label="✅ Записаться", style=discord.ButtonStyle.success, custom_id=f"join_{self.message_id}")
+    @ui.button(label="Записаться", style=discord.ButtonStyle.success, custom_id=f"join_{self.message_id}")
     async def callback(self, interaction: discord.Interaction):
         data = event_lists.get(self.message_id)
         if not data:
             return await interaction.response.send_message("❌ Сбор недоступен!", ephemeral=True)
-
+        
         if data.get("closed"):
             return await interaction.response.send_message("🔒 Список закрыт!", ephemeral=True)
-
+        
         user_id = interaction.user.id
-        slots   = data["slots"]
-
+        slots = data["slots"]
+        
         # Уже записан — выйти
         for slot_num, uid in slots.items():
             if uid == user_id:
@@ -987,7 +989,7 @@ class JoinButton(ui.Button):
                 await update_thread_list(self.message_id)
                 await interaction.followup.send("❌ Вы покинули сбор", ephemeral=True)
                 return
-
+        
         # Найти свободный слот
         for i in range(1, data["max"] + 1):
             if slots.get(i) is None:
@@ -999,8 +1001,9 @@ class JoinButton(ui.Button):
                 await update_thread_list(self.message_id)
                 await interaction.followup.send("✅ Вы записались в сбор!", ephemeral=True)
                 return
-
+        
         await interaction.response.send_message("❌ Все места заняты!", ephemeral=True)
+
 
 
 class JoinEventView(ui.View):
@@ -1413,6 +1416,7 @@ class ApplicationReviewView(ui.View):
     def __init__(self, applicant_id: int = 0):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
+        self.add_item(ui.Button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, custom_id="ticket_invite_voice"))
 
     def _get_applicant_id(self, message: discord.Message) -> int:
         if self.applicant_id:
@@ -1519,8 +1523,7 @@ class ApplicationReviewView(ui.View):
                 overwrites=overwrites
             )
             
-            # Сохранение связи тикет <-> войс (если нужно для дальнейшего использования)
-            # В main.py есть словарь ticket_voice_channels: { text_channel_id: voice_channel_id }
+            # Сохранение связи тикет <-> войс
             ticket_voice_channels[interaction.channel.id] = voice_channel.id
             
             # Отправка DM пользователю

@@ -10,7 +10,14 @@ import asyncio
 import re
 import aiohttp
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+MSK = timezone(timedelta(hours=3))
+
+def now_msk() -> datetime:
+    """Текущее время по МСК."""
+    return datetime.now(MSK).replace(tzinfo=None)
+
 load_dotenv()
 
 # ─────────────────────────────────────────────
@@ -1124,7 +1131,7 @@ class AfkModal(ui.Modal, title="🕐 Уход в АФК"):
         afk_list[guild_id][user_id] = {
             "reason":      str(self.reason),
             "return_time": str(self.return_time),
-            "since":       datetime.now(),
+            "since":       now_msk(),
         }
         save_data()
 

@@ -235,8 +235,8 @@ obshak_log_channels: dict = {}
 # { guild_id: role_id }  — роль для тега в логах общака
 obshak_ping_roles: dict = {}
 
-# { ticket_text_channel_id: voice_channel_id } — войс для обзвона по заявке
-ticket_voice_channels: dict = {}
+# { guild_id: channel_id } — голосовой канал для обзвонов
+interview_channels: dict = {}
 
 # { guild_id: [ { "user_id": int, "amount": int, "date": str (ISO) } ] }
 obshak_deposits: dict = {}
@@ -653,6 +653,7 @@ def save_data():
             "mp_roles2":            {str(g): v for g, v in mp_roles2.items()},
             "list_roles2":          {str(g): v for g, v in list_roles2.items()},
             "ticket_voice_channels": {str(c): v for c, v in ticket_voice_channels.items()},
+            "interview_channels":       {str(g): v for g, v in interview_channels.items()},
             "vzp_monitor_config":   {str(g): v for g, v in vzp_monitor_config.items()},
             "vzp_processed_events": {str(g): v for g, v in vzp_processed_events.items()},
             "casino_role_luck":     {str(g): {str(r): v for r, v in roles.items()} for g, roles in casino_role_luck.items()},
@@ -777,6 +778,8 @@ def load_data():
             list_roles2[int(g)] = v
         for c, v in data.get("ticket_voice_channels", {}).items():
             ticket_voice_channels[int(c)] = int(v)
+        for g, v in data.get("interview_channels", {}).items():
+            interview_channels[int(g)] = v
         for g, v in data.get("vzp_monitor_config", {}).items():
             vzp_monitor_config[int(g)] = v
         for g, v in data.get("vzp_processed_events", {}).items():
@@ -1505,23 +1508,21 @@ class ApplicationReviewView(ui.View):
         guild = interaction.guild
         
         try:
-            # Создание голосового канала
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(connect=False),
-                interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True),
-            }
-            
-            # Поиск роли менеджера для доступа к каналу
-            tm_role_id = ticket_manager_roles.get(guild.id)
-            if tm_role_id:
-                tm_role = guild.get_role(tm_role_id)
-                if tm_role:
-                    overwrites[tm_role] = discord.PermissionOverwrite(connect=True)
-            
-            voice_channel = await guild.create_voice_channel(
-                name=f"Обзвон-тикет-{applicant_id}",
-                overwrites=overwrites
-            )
+            # Используем настроенный канал обзвона, если он есть
+            interview_channel_id = interview_channels.get(guild.id)
+            if interview_channel_id:
+                voice_channel = guild.get_channel(interview_channel_id)
+                if not voice_channel:
+                    # Если канал не найден, создаем новый (fallback)
+                    voice_channel = await guild.create_voice_channel(
+                        name=f"Обзвон-тикет-{applicant_id}",
+                        overwrites=overwrites
+                    )
+            else:
+                voice_channel = await guild.create_voice_channel(
+                    name=f"Обзвон-тикет-{applicant_id}",
+                    overwrites=overwrites
+                )
             
             # Сохранение связи тикет <-> войс
             ticket_voice_channels[interaction.channel.id] = voice_channel.id
@@ -2322,7 +2323,14 @@ async def slash_ticket_viewer_remove(interaction: discord.Interaction, роль:
     await interaction.response.send_message(f"✅ {роль.mention} убрана из доступа к тикетам.", ephemeral=True)
 
 
-@tree.command(name="тикет_пинг", description="Роль, которая тегается в сообщении тикета")
+@tree.command(name="канал_обзвона", description="Установить голосовой канал для приглашений на обзвон")
+@app_commands.describe(канал="Голосовой канал для обзвонов")
+async def slash_interview_channel(interaction: discord.Interaction, канал: discord.VoiceChannel):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    interview_channels[interaction.guild_id] = канал.id
+    save_data()
+    await interaction.response.send_message(f"✅ Канал для обзвонов установлен: {канал.mention}", ephemeral=True)
 @app_commands.describe(роль="Роль для тега (если не задана — тегается тикет-менеджер)")
 async def slash_ticket_ping(interaction: discord.Interaction, роль: discord.Role):
     if not is_admin(interaction):

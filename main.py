@@ -420,7 +420,10 @@ async def update_thread_list(message_id: int):
         if not thread:
             return
         msg = await thread.fetch_message(data["thread_msg_id"])
-        await msg.edit(content=build_thread_list(data["title"], data["max"], data["slots"]), view=ThreadListView(message_id))
+        await msg.edit(
+            content=build_thread_list(data["title"], data["max"], data["slots"], data.get("reserve", [])),
+            view=ThreadListView(message_id),
+        )
     except Exception:
         pass
 
@@ -733,8 +736,9 @@ def load_data():
             inactive_panels[int(g)] = v
         for mid, ev in data.get("event_lists", {}).items():
             event_lists[int(mid)] = {
-                **{k: v for k, v in ev.items() if k != "slots"},
+                **{k: v for k, v in ev.items() if k not in ("slots", "reserve")},
                 "slots": {int(s): uid for s, uid in ev.get("slots", {}).items()},
+                "reserve": [int(u) for u in ev.get("reserve", [])],
             }
         for g, v in data.get("shop_panels", {}).items():
             shop_panels[int(g)] = v
@@ -915,6 +919,7 @@ class SlotButton(ui.Button):
 
         user_id = interaction.user.id
         slots   = data["slots"]
+        reserve = data.setdefault("reserve", [])
 
         if slots.get(self.slot_num) == user_id:
             # Покинуть слот
@@ -930,14 +935,64 @@ class SlotButton(ui.Button):
                 if uid == user_id:
                     slots[s] = None
                     break
+            if user_id in reserve:
+                reserve.remove(user_id)
             slots[self.slot_num] = user_id
             msg_text = f"✅ Вы заняли слот **{self.slot_num}**!"
 
         save_data()
         new_view = EventView(self.message_id)
-        embed    = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), event_time=data.get("event_time"), closed=data.get("closed", False))
+        embed    = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), event_time=data.get("event_time"), closed=data.get("closed", False), reserve=reserve)
         await interaction.response.defer()
         await interaction.message.edit(embed=embed, view=new_view)
+        await update_thread_list(self.message_id)
+        await interaction.followup.send(msg_text, ephemeral=True)
+
+
+class ReserveButton(ui.Button):
+    """Кнопка записи в резерв (запасной список)."""
+    def __init__(self, message_id: int):
+        super().__init__(
+            label="Резерв",
+            emoji="🪑",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"reserve_{message_id}",
+        )
+        self.message_id = message_id
+
+    async def callback(self, interaction: discord.Interaction):
+        data = event_lists.get(self.message_id)
+        if not data:
+            return await interaction.response.send_message("❌ Сбор уже недоступен!", ephemeral=True)
+        if data.get("closed"):
+            return await interaction.response.send_message("🔒 Список закрыт!", ephemeral=True)
+
+        user_id = interaction.user.id
+        slots = data["slots"]
+        reserve = data.setdefault("reserve", [])
+        join_mode = data.get("mode") == "join"
+
+        if user_id in reserve:
+            reserve.remove(user_id)
+            msg_text = "❌ Вы покинули **резерв**"
+        else:
+            for s, uid in list(slots.items()):
+                if uid == user_id:
+                    slots[s] = None
+            if user_id not in reserve:
+                reserve.append(user_id)
+            msg_text = "✅ Вы записались в **резерв**!"
+
+        save_data()
+        embed = build_event_embed(
+            interaction.guild_id, data["title"], data["max"], slots,
+            data.get("image_url"), data.get("note"), join_mode=join_mode,
+            event_time=data.get("event_time"), closed=data.get("closed", False),
+            reserve=reserve,
+        )
+        view = JoinEventView(self.message_id) if join_mode else EventView(self.message_id)
+        await interaction.response.defer()
+        await interaction.message.edit(embed=embed, view=view)
         await update_thread_list(self.message_id)
         await interaction.followup.send(msg_text, ephemeral=True)
 
@@ -952,9 +1007,11 @@ class EventView(ui.View):
         slots     = data.get("slots", {})
         max_count = data.get("max", 0)
 
-        slot_count = min(max_count, 25)
+        # Макс. 24 слота-кнопки + 1 «Резерв» (лимит Discord — 25)
+        slot_count = min(max_count, 24)
         for i in range(1, slot_count + 1):
             self.add_item(SlotButton(i, message_id, slots.get(i)))
+        self.add_item(ReserveButton(message_id))
 
 
 class JoinButton(ui.Button):
@@ -980,41 +1037,45 @@ class JoinButton(ui.Button):
         
         user_id = interaction.user.id
         slots = data["slots"]
-        
+        reserve = data.setdefault("reserve", [])
+
         # Уже записан — выйти
         for slot_num, uid in slots.items():
             if uid == user_id:
                 slots[slot_num] = None
                 save_data()
-                embed = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=True, event_time=data.get("event_time"), closed=data.get("closed", False))
+                embed = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=True, event_time=data.get("event_time"), closed=data.get("closed", False), reserve=reserve)
                 await interaction.response.defer()
                 await interaction.message.edit(embed=embed)
                 await update_thread_list(self.message_id)
                 await interaction.followup.send("❌ Вы покинули сбор", ephemeral=True)
                 return
-        
+
         # Найти свободный слот
         for i in range(1, data["max"] + 1):
             if slots.get(i) is None:
+                if user_id in reserve:
+                    reserve.remove(user_id)
                 slots[i] = user_id
                 save_data()
-                embed = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=True, event_time=data.get("event_time"), closed=data.get("closed", False))
+                embed = build_event_embed(interaction.guild_id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=True, event_time=data.get("event_time"), closed=data.get("closed", False), reserve=reserve)
                 await interaction.response.defer()
                 await interaction.message.edit(embed=embed)
                 await update_thread_list(self.message_id)
                 await interaction.followup.send("✅ Вы записались в сбор!", ephemeral=True)
                 return
-        
-        await interaction.response.send_message("❌ Все места заняты!", ephemeral=True)
+
+        await interaction.response.send_message("❌ Все места заняты! Запишись в **🪑 Резерв**.", ephemeral=True)
 
 
 
 class JoinEventView(ui.View):
-    """View с одной кнопкой ✅. Для сборов с > 25 слотами."""
+    """View с кнопкой ✅ и резервом. Для сборов с > 24 слотами / !list."""
     def __init__(self, message_id: int):
         super().__init__(timeout=None)
         self.message_id = message_id
         self.add_item(JoinButton(message_id))
+        self.add_item(ReserveButton(message_id))
 
 
 class KickButton(ui.Button):
@@ -1035,26 +1096,39 @@ class KickButton(ui.Button):
             return await interaction.response.send_message("❌ Сбор не найден!", ephemeral=True)
 
         slots = data["slots"]
+        reserve = data.setdefault("reserve", [])
         members_in_slots = [(slot_num, uid) for slot_num, uid in slots.items() if uid is not None]
-        if not members_in_slots:
-            return await interaction.response.send_message("❌ Слоты пусты!", ephemeral=True)
+        if not members_in_slots and not reserve:
+            return await interaction.response.send_message("❌ Слоты и резерв пусты!", ephemeral=True)
 
         options = [
-            discord.SelectOption(label=f"Слот {s}: {uid}", value=str(s))
-            for s, uid in members_in_slots[:25]
+            discord.SelectOption(label=f"Слот {s}: {uid}", value=f"S{s}")
+            for s, uid in members_in_slots
         ]
+        options += [
+            discord.SelectOption(label=f"Резерв R{i}: {uid}", value=f"R{i - 1}")
+            for i, uid in enumerate(reserve, 1)
+        ]
+        options = options[:25]
 
         class KickSelect(ui.Select):
             def __init__(self_inner):
                 super().__init__(placeholder="Выбери участника для кика...", options=options)
 
             async def callback(self_inner, inter: discord.Interaction):
-                slot_num = int(self_inner.values[0])
-                kicked_uid = data["slots"].get(slot_num)
-                data["slots"][slot_num] = None
+                value = self_inner.values[0]
+                if value.startswith("R"):
+                    idx = int(value[1:])
+                    kicked_uid = reserve.pop(idx) if 0 <= idx < len(reserve) else None
+                    where = "резерва"
+                else:
+                    slot_num = int(value[1:])
+                    kicked_uid = data["slots"].get(slot_num)
+                    data["slots"][slot_num] = None
+                    where = f"слота **{slot_num}**"
                 save_data()
                 join_mode = data.get("mode") == "join"
-                embed = build_event_embed(inter.guild_id, data["title"], data["max"], data["slots"], data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data.get("closed", False))
+                embed = build_event_embed(inter.guild_id, data["title"], data["max"], data["slots"], data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data.get("closed", False), reserve=reserve)
                 try:
                     ch = bot.get_channel(data["channel_id"])
                     orig_msg = await ch.fetch_message(self.message_id)
@@ -1063,7 +1137,7 @@ class KickButton(ui.Button):
                 except Exception:
                     pass
                 await update_thread_list(self.message_id)
-                await inter.response.edit_message(content=f"✅ <@{kicked_uid}> убран из слота **{slot_num}**", view=None, embed=None)
+                await inter.response.edit_message(content=f"✅ <@{kicked_uid}> убран из {where}", view=None, embed=None)
 
         kick_view = ui.View(timeout=60)
         kick_view.add_item(KickSelect())
@@ -1090,7 +1164,7 @@ class CloseListButton(ui.Button):
         save_data()
 
         join_mode = data.get("mode") == "join"
-        embed = build_event_embed(interaction.guild_id, data["title"], data["max"], data["slots"], data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data["closed"])
+        embed = build_event_embed(interaction.guild_id, data["title"], data["max"], data["slots"], data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data["closed"], reserve=data.get("reserve", []))
         try:
             ch = bot.get_channel(data["channel_id"])
             orig_msg = await ch.fetch_message(self.message_id)
@@ -1104,7 +1178,7 @@ class CloseListButton(ui.Button):
             thread = bot.get_channel(data["thread_id"])
             if thread:
                 msg = await thread.fetch_message(data["thread_msg_id"])
-                await msg.edit(content=build_thread_list(data["title"], data["max"], data["slots"]), view=new_thread_view)
+                await msg.edit(content=build_thread_list(data["title"], data["max"], data["slots"], data.get("reserve", [])), view=new_thread_view)
         except Exception:
             pass
 
@@ -1415,11 +1489,85 @@ class TicketPanelView(ui.View):
         await interaction.response.send_modal(ApplicationModal(self.category_id))
 
 
+async def _ensure_ticket_call_voice(
+    guild: discord.Guild,
+    ticket_channel: discord.abc.GuildChannel,
+    applicant_id: int,
+    manager: discord.Member,
+) -> discord.VoiceChannel:
+    """Создаёт (или возвращает существующий) голосовой канал для обзвона по тикету."""
+    existing_id = ticket_voice_channels.get(ticket_channel.id)
+    if existing_id:
+        vc = guild.get_channel(existing_id)
+        if isinstance(vc, discord.VoiceChannel):
+            return vc
+
+    overwrites: dict = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False, connect=False),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True, connect=True, manage_channels=True, move_members=True, speak=True
+        ),
+        manager: discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True, move_members=True
+        ),
+    }
+
+    applicant = guild.get_member(applicant_id)
+    if applicant is None:
+        try:
+            applicant = await guild.fetch_member(applicant_id)
+        except Exception:
+            applicant = None
+    if applicant:
+        overwrites[applicant] = discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True
+        )
+
+    tm_role_id = ticket_manager_roles.get(guild.id)
+    if tm_role_id:
+        tm_role = guild.get_role(tm_role_id)
+        if tm_role:
+            overwrites[tm_role] = discord.PermissionOverwrite(
+                view_channel=True, connect=True, speak=True, move_members=True
+            )
+
+    for rid in ticket_viewer_roles.get(guild.id, []):
+        r = guild.get_role(rid)
+        if r:
+            overwrites[r] = discord.PermissionOverwrite(
+                view_channel=True, connect=True, speak=True
+            )
+
+    name = f"обзвон-{ticket_channel.name}"[:100]
+    vc = await guild.create_voice_channel(
+        name=name,
+        category=getattr(ticket_channel, "category", None),
+        overwrites=overwrites,
+        reason=f"Обзвон по заявке {ticket_channel.name}",
+    )
+    ticket_voice_channels[ticket_channel.id] = vc.id
+    save_data()
+    return vc
+
+
+async def _delete_ticket_call_voice(guild: discord.Guild, ticket_channel_id: int):
+    """Удаляет голосовой канал обзвона, привязанный к тикету."""
+    vc_id = ticket_voice_channels.pop(ticket_channel_id, None)
+    if not vc_id:
+        return
+    save_data()
+    vc = guild.get_channel(vc_id)
+    if isinstance(vc, discord.VoiceChannel):
+        try:
+            await vc.delete(reason="Тикет закрыт — обзвон завершён")
+        except Exception:
+            pass
+
+
 class ApplicationReviewView(ui.View):
     def __init__(self, applicant_id: int = 0):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
-        self.add_item(ui.Button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, custom_id="ticket_invite_voice"))
 
     def _get_applicant_id(self, message: discord.Message) -> int:
         if self.applicant_id:
@@ -1498,55 +1646,71 @@ class ApplicationReviewView(ui.View):
         close_embed.set_footer(text=f"MORIARTY • {applicant_id}", icon_url=_footer(interaction.guild_id))
         await channel.send(embed=close_embed, view=PostCloseView())
 
-    @ui.button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, custom_id="ticket_invite_voice")
-    async def invite_voice(self, interaction: discord.Interaction, button: ui.Button):
+    @ui.button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, emoji="🎤", custom_id="ticket_invite_call")
+    async def invite_call(self, interaction: discord.Interaction, button: ui.Button):
         if not is_ticket_manager(interaction):
             return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
-        
-        await interaction.response.defer(ephemeral=True)
-        applicant_id = self._get_applicant_id(interaction.message)
-        guild = interaction.guild
-        
-        try:
-            # Используем настроенный канал обзвона, если он есть
-            interview_channel_id = interview_channels.get(guild.id)
-            if interview_channel_id:
-                voice_channel = guild.get_channel(interview_channel_id)
-                if not voice_channel:
-                    # Если канал не найден, создаем новый (fallback)
-                    voice_channel = await guild.create_voice_channel(
-                        name=f"Обзвон-тикет-{applicant_id}",
-                        overwrites=overwrites
-                    )
-            else:
-                voice_channel = await guild.create_voice_channel(
-                    name=f"Обзвон-тикет-{applicant_id}",
-                    overwrites=overwrites
-                )
-            
-            # Сохранение связи тикет <-> войс
-            ticket_voice_channels[interaction.channel.id] = voice_channel.id
-            
-            # Отправка DM пользователю
-            try:
-                target = await interaction.client.fetch_user(applicant_id)
-                invite = await voice_channel.create_invite(max_age=3600)
-                dm_embed = discord.Embed(
-                    title="🎙 Приглашение на обзвон",
-                    description=f"Вас приглашают на обзвон в канале {voice_channel.mention}!\n\nСсылка: {invite.url}",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now(),
-                )
-                dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
-                await target.send(embed=dm_embed)
-            except Exception as e:
-                await interaction.followup.send(f"❌ Не удалось отправить DM пользователю: {e}", ephemeral=True)
-            else:
-                await interaction.followup.send(f"✅ Голосовой канал создан и приглашение отправлено в DM {applicant_id}.", ephemeral=True)
-                
-        except Exception as e:
-            await interaction.followup.send(f"❌ Ошибка при создании голосового канала: {e}", ephemeral=True)
 
+        applicant_id = self._get_applicant_id(interaction.message)
+        if not applicant_id:
+            return await interaction.response.send_message("❌ Не удалось определить заявителя.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        ticket_ch = interaction.channel
+
+        try:
+            vc = await _ensure_ticket_call_voice(guild, ticket_ch, applicant_id, interaction.user)
+        except Exception as e:
+            return await interaction.followup.send(
+                f"❌ Не удалось создать голосовой канал: {e}", ephemeral=True
+            )
+
+        link = f"https://discord.com/channels/{guild.id}/{vc.id}"
+        dm_ok = False
+        try:
+            target = await interaction.client.fetch_user(applicant_id)
+            dm_embed = discord.Embed(
+                title="🎤 Приглашение на обзвон",
+                description=(
+                    f"Тебя пригласили на **обзвон** по заявке в **{guild.name}**.\n\n"
+                    f"Зайди в голосовой канал: **{vc.name}**\n"
+                    f"→ {link}"
+                ),
+                color=discord.Color.blue(),
+                timestamp=datetime.now(),
+            )
+            dm_embed.add_field(name="👮 Пригласил", value=interaction.user.mention, inline=True)
+            dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+            await target.send(embed=dm_embed)
+            dm_ok = True
+        except Exception:
+            pass
+
+        note = discord.Embed(
+            title="🎤 Обзвон",
+            description=(
+                f"{interaction.user.mention} пригласил <@{applicant_id}> на обзвон.\n"
+                f"Канал: {vc.mention}"
+            ),
+            color=discord.Color.blue(),
+            timestamp=datetime.now(),
+        )
+        note.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+        try:
+            await ticket_ch.send(embed=note)
+        except Exception:
+            pass
+
+        if dm_ok:
+            await interaction.followup.send(
+                f"✅ Приглашение отправлено в ЛС. Канал: {vc.mention}", ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"⚠️ Канал создан ({vc.mention}), но ЛС закрыты — напиши заявителю вручную.",
+                ephemeral=True,
+            )
 
     @ui.button(label="❌ Отклонить", style=discord.ButtonStyle.danger, custom_id="ticket_reject")
     async def reject(self, interaction: discord.Interaction, button: ui.Button):
@@ -1586,11 +1750,63 @@ class PostCloseView(ui.View):
         await interaction.channel.send(embed=reopen_embed, view=ApplicationReviewView(applicant_id))
         await interaction.followup.send("✅ Тикет переоткрыт.", ephemeral=True)
 
+    @ui.button(label="Пригласить на обзвон", style=discord.ButtonStyle.primary, emoji="🎙", custom_id="ticket_invite_voice")
+    async def invite_voice(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_ticket_manager(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        applicant_id = self._get_applicant_id(interaction.message)
+        guild = interaction.guild
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(connect=False),
+            interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True),
+        }
+        tm_role_id = ticket_manager_roles.get(guild.id)
+        if tm_role_id:
+            tm_role = guild.get_role(tm_role_id)
+            if tm_role:
+                overwrites[tm_role] = discord.PermissionOverwrite(connect=True)
+
+        try:
+            # Используем настроенный канал обзвона, если он есть
+            interview_channel_id = interview_channels.get(guild.id)
+            voice_channel = guild.get_channel(interview_channel_id) if interview_channel_id else None
+            if voice_channel is None:
+                voice_channel = await guild.create_voice_channel(
+                    name=f"Обзвон-тикет-{applicant_id}",
+                    overwrites=overwrites,
+                )
+
+            ticket_voice_channels[interaction.channel.id] = voice_channel.id
+            save_data()
+
+            try:
+                target = await interaction.client.fetch_user(applicant_id)
+                invite = await voice_channel.create_invite(max_age=3600)
+                dm_embed = discord.Embed(
+                    title="🎙 Приглашение на обзвон",
+                    description=f"Вас приглашают на обзвон в канале {voice_channel.mention}!\n\nСсылка: {invite.url}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(),
+                )
+                dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+                await target.send(embed=dm_embed)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Не удалось отправить DM пользователю: {e}", ephemeral=True)
+            else:
+                await interaction.followup.send(f"✅ Голосовой канал готов, приглашение отправлено в DM <@{applicant_id}>.", ephemeral=True)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Ошибка при создании голосового канала: {e}", ephemeral=True)
+
     @ui.button(label="🗑️ Удалить канал", style=discord.ButtonStyle.danger, custom_id="ticket_delete_channel")
     async def delete_channel(self, interaction: discord.Interaction, button: ui.Button):
         if not is_ticket_manager(interaction):
             return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
+        await _delete_ticket_call_voice(interaction.guild, interaction.channel.id)
         await asyncio.sleep(3)
         try:
             await interaction.channel.delete(reason=f"Тикет удалён — {interaction.user}")
@@ -1793,7 +2009,7 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
 
     event_lists[msg.id] = {
         "title": title, "max": max_count, "mode": "join" if join_mode else "buttons",
-        "slots": slots, "image_url": image_ref, "note": None,
+        "slots": slots, "reserve": [], "image_url": image_ref, "note": None,
         "channel_id": channel.id, "thread_id": None, "thread_msg_id": None,
         "event_time": event_time, "closed": False,
     }
@@ -1803,7 +2019,7 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
 
     # Тред с живым списком
     try:
-        hint = "Нажми ✅ в сообщении выше для записи!" if join_mode else "Выбирай слот кнопкой в сообщении выше!"
+        hint = "Нажми ✅ для записи · 🪑 Резерв — запасной список" if join_mode else "Кнопка слота · 🪑 Резерв — запасной список"
         thread = await msg.create_thread(name=f"💬 {title}", auto_archive_duration=1440)
         thread_embed = discord.Embed(
             description=f"📋 Обсуждение сбора **{title}**\n{hint}",
@@ -1811,7 +2027,7 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
         )
         thread_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
         await thread.send(embed=thread_embed)
-        list_msg = await thread.send(build_thread_list(title, max_count, slots), view=ThreadListView(msg.id))
+        list_msg = await thread.send(build_thread_list(title, max_count, slots, []), view=ThreadListView(msg.id))
         event_lists[msg.id]["thread_id"]     = thread.id
         event_lists[msg.id]["thread_msg_id"] = list_msg.id
     except Exception:
@@ -2793,7 +3009,7 @@ async def замена_cmd(ctx, кого: int, на_кого: int = 0):
         channel = bot.get_channel(data["channel_id"])
         msg = await channel.fetch_message(msg_id)
         join_mode = data.get("mode") == "join"
-        embed = build_event_embed(ctx.guild.id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data.get("closed", False))
+        embed = build_event_embed(ctx.guild.id, data["title"], data["max"], slots, data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data.get("closed", False), reserve=data.get("reserve", []))
         view = JoinEventView(msg_id) if join_mode else EventView(msg_id)
         await msg.edit(embed=embed, view=view)
     except Exception:
@@ -6592,13 +6808,26 @@ def _vzp_mentions(guild_id: int) -> str:
     return " ".join(parts)
 
 
-def _duration_str(start_ts, end_ts) -> str:
+def _parse_vzp_ts(raw) -> int | None:
+    """API отдаёт ISO8601 ('2026-07-28T17:57:05.000Z'), а не unix-время."""
+    if not raw:
+        return None
+    if isinstance(raw, (int, float)):
+        return int(raw)
     try:
-        secs = int(end_ts) - int(start_ts)
-        m, s = divmod(abs(secs), 60)
-        return f"{m}м {s}с"
+        return int(datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp())
     except Exception:
+        return None
+
+
+def _duration_str(start_ts, end_ts) -> str:
+    start = _parse_vzp_ts(start_ts)
+    end = _parse_vzp_ts(end_ts)
+    if start is None or end is None:
         return "—"
+    secs = end - start
+    m, s = divmod(abs(secs), 60)
+    return f"{m}м {s}с"
 
 
 def _player_table(players: list) -> str:
@@ -6608,7 +6837,7 @@ def _player_table(players: list) -> str:
     sep = "─" * len(header)
     rows = [header, sep]
     for p in sorted(players, key=lambda x: x.get("kills", 0), reverse=True):
-        name = str(p.get("characterName") or p.get("name") or "?")[:20]
+        name = str(p.get("charName") or p.get("characterName") or p.get("name") or "?")[:20]
         k    = p.get("kills", 0)
         dmg  = p.get("damage", 0)
         hit  = f"{p.get('hitPercent', 0):.1f}"
@@ -6625,14 +6854,14 @@ async def _send_war_started(guild_id: int, event: dict):
     if not ch:
         return
 
-    family_id = cfg["familyId"]
-    atk = event.get("attackerOrganization") or {}
-    def_ = event.get("defenderOrganization") or {}
-    our_side = "ATK ⚔️" if atk.get("id") == family_id else "DEF 🛡️"
-    opponent = def_.get("name", "?") if atk.get("id") == family_id else atk.get("name", "?")
+    family_name = cfg["familyName"]
+    atk_name = event.get("attackerName", "?")
+    def_name = event.get("defenderName", "?")
+    our_side = "ATK ⚔️" if atk_name == family_name else "DEF 🛡️"
+    opponent = def_name if atk_name == family_name else atk_name
 
-    ts = event.get("startedAt")
-    ts_str = f"<t:{int(ts)}:T>" if ts else "—"
+    ts = _parse_vzp_ts(event.get("startedAt"))
+    ts_str = f"<t:{ts}:T>" if ts else "—"
 
     embed = discord.Embed(
         title=f"⚔️ ВОЙНА НАЧАЛАСЬ — {event.get('pointName', '?')}",
@@ -6641,7 +6870,7 @@ async def _send_war_started(guild_id: int, event: dict):
     )
     embed.add_field(name="Наша роль",     value=our_side,                        inline=True)
     embed.add_field(name="Противник",     value=opponent,                        inline=True)
-    embed.add_field(name="Карта",         value=event.get("mapName", "?"),       inline=True)
+    embed.add_field(name="Карта",         value=event.get("map", "?"),           inline=True)
     embed.add_field(name="Макс. игроков", value=str(event.get("maxPlayers","?")),inline=True)
     embed.add_field(name="Начало",        value=ts_str,                          inline=True)
     embed.set_footer(text="vzp-gta5rp.com")
@@ -6658,43 +6887,47 @@ async def _send_war_result(guild_id: int, event: dict):
     if not ch:
         return
 
-    family_id = cfg["familyId"]
-    atk    = event.get("attackerOrganization") or {}
-    def_   = event.get("defenderOrganization") or {}
-    winner = event.get("winnerOrganization")   or {}
+    family_name = cfg["familyName"]
+    atk_name    = event.get("attackerName", "?")
+    def_name    = event.get("defenderName", "?")
+    winner_name = event.get("winnerName")
+    we_are_atk  = (atk_name == family_name)
 
-    we_won = (winner.get("id") == family_id)
+    we_won = (winner_name == family_name)
     color  = 0x57F287 if we_won else 0xED4245
     title  = ("✅ ПОБЕДА" if we_won else "❌ ПОРАЖЕНИЕ") + f" — {event.get('pointName','?')}"
 
     start_ts = event.get("startedAt")
     end_ts   = event.get("endedAt")
     duration = _duration_str(start_ts, end_ts)
-    start_str = f"<t:{int(start_ts)}:t>" if start_ts else "—"
-    end_str   = f"<t:{int(end_ts)}:t>"   if end_ts   else "—"
+    start_epoch = _parse_vzp_ts(start_ts)
+    end_epoch   = _parse_vzp_ts(end_ts)
+    start_str = f"<t:{start_epoch}:t>" if start_epoch else "—"
+    end_str   = f"<t:{end_epoch}:t>"   if end_epoch   else "—"
 
     embed = discord.Embed(title=title, color=color, timestamp=datetime.now())
-    embed.add_field(name="Атака",      value=atk.get("name","?"),    inline=True)
-    embed.add_field(name="Защита",     value=def_.get("name","?"),   inline=True)
-    embed.add_field(name="Победитель", value=winner.get("name","?"), inline=True)
+    embed.add_field(name="Атака",      value=atk_name,               inline=True)
+    embed.add_field(name="Защита",     value=def_name,               inline=True)
+    embed.add_field(name="Победитель", value=winner_name or "?",     inline=True)
     embed.add_field(name="Длительность", value=duration,             inline=True)
 
-    atk_players = event.get("attackerPlayers") or []
-    def_players = event.get("defenderPlayers") or []
-    our_players  = atk_players if atk.get("id") == family_id else def_players
-    enemy_players = def_players if atk.get("id") == family_id else atk_players
+    atk_players = event.get("attackers") or []
+    def_players = event.get("defenders") or []
+    atk_stats = event.get("attackerStats") or {}
+    def_stats = event.get("defenderStats") or {}
 
-    def _s(lst, key): return sum(p.get(key, 0) for p in lst)
+    our_players,  our_stats  = (atk_players, atk_stats) if we_are_atk else (def_players, def_stats)
+    enemy_players, enemy_stats = (def_players, def_stats) if we_are_atk else (atk_players, atk_stats)
 
-    our_label   = f"Наша команда ({'ATK' if atk.get('id') == family_id else 'DEF'})"
+    our_label = f"Наша команда ({'ATK' if we_are_atk else 'DEF'})"
     embed.add_field(
         name=our_label,
-        value=f"K: **{_s(our_players,'kills')}** | DMG: **{_s(our_players,'damage')}** | HS: **{_s(our_players,'headshots')}**",
+        value=f"K: **{our_stats.get('kills',0)}** | DMG: **{our_stats.get('damage',0)}** | HS: **{our_stats.get('headshots',0)}**",
         inline=False,
     )
     embed.add_field(
         name="Противник",
-        value=f"K: **{_s(enemy_players,'kills')}** | DMG: **{_s(enemy_players,'damage')}** | HS: **{_s(enemy_players,'headshots')}**",
+        value=f"K: **{enemy_stats.get('kills',0)}** | DMG: **{enemy_stats.get('damage',0)}** | HS: **{enemy_stats.get('headshots',0)}**",
         inline=False,
     )
     if our_players:
@@ -6721,15 +6954,16 @@ async def vzp_monitor_loop():
                 continue
             vzp_last_check[guild_id] = now
 
-            family_id = cfg.get("familyId")
+            family_name = cfg.get("familyName")
             server_id = cfg.get("serverId")
-            if not family_id or not server_id:
+            if not family_name or not server_id:
                 continue
 
             processed = vzp_processed_events.setdefault(guild_id, {})
             changed = False
 
-            events = await _vzp_get(session, "/events", serverId=server_id, limit=50)
+            # API игнорирует параметр serverId — фильтруем сами, ниже.
+            events = await _vzp_get(session, "/events", limit=100)
             events = _vzp_unwrap(events)
             if not isinstance(events, list):
                 events = []
@@ -6738,9 +6972,9 @@ async def vzp_monitor_loop():
                 eid = str(ev.get("id") or ev.get("eventId") or "")
                 if not eid:
                     continue
-                atk  = ev.get("attackerOrganization") or {}
-                def_ = ev.get("defenderOrganization") or {}
-                if atk.get("id") != family_id and def_.get("id") != family_id:
+                if ev.get("serverId") != server_id:
+                    continue
+                if ev.get("attackerName") != family_name and ev.get("defenderName") != family_name:
                     continue
 
                 ended  = ev.get("endedAt")
@@ -7015,9 +7249,9 @@ async def vzp_family_cmd(interaction: discord.Interaction):
     wr = data.get("winrate") or data.get("winRate")
     if wr is not None:
         embed.add_field(name="Винрейт", value=f"{float(wr):.1f}%", inline=True)
-    gr = data.get("rank") or data.get("globalRank") or data.get("global_rank") or data.get("position")
+    gr = data.get("rankGlobal") or data.get("rank") or data.get("globalRank") or data.get("position")
     embed.add_field(name="Глобальный ранк", value=f"#{gr}" if gr is not None else "?", inline=True)
-    sr = data.get("serverRank") or data.get("server_rank")
+    sr = data.get("rankServer") or data.get("serverRank")
     if sr:
         embed.add_field(name="Ранк на сервере", value=f"#{sr}", inline=True)
     embed.set_footer(text="vzp-gta5rp.com")
@@ -7045,18 +7279,16 @@ async def vzp_history_cmd(interaction: discord.Interaction, количество
         color=0x5865F2,
         timestamp=datetime.now(),
     )
-    family_id = cfg["familyId"]
     for ev in items[:количество]:
-        atk    = (ev.get("attackerOrganization") or {}).get("name", "?")
-        def_   = (ev.get("defenderOrganization") or {}).get("name", "?")
-        winner = (ev.get("winnerOrganization")   or {}).get("id")
-        result = "✅ Победа" if winner == family_id else "❌ Поражение"
-        point  = ev.get("pointName", "?")
-        ts     = ev.get("endedAt") or ev.get("startedAt")
-        time_s = f"<t:{int(ts)}:d>" if ts else "—"
+        role     = ev.get("role", "?")
+        opponent = ev.get("opponentName", "?")
+        result   = "✅ Победа" if ev.get("isWin") else "❌ Поражение"
+        map_name = ev.get("map", "?")
+        ts       = _parse_vzp_ts(ev.get("date"))
+        time_s   = f"<t:{ts}:d>" if ts else "—"
         embed.add_field(
-            name=f"{result} — {point}",
-            value=f"{atk} ⚔️ {def_}\n{time_s}",
+            name=f"{result} — {role}",
+            value=f"vs {opponent}\n📍 {map_name}\n{time_s}",
             inline=False,
         )
     if not items:

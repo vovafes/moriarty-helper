@@ -254,13 +254,8 @@ casino_role_luck: dict = {}
 # 📋 СОСТАВ СЕМЬИ
 # ─────────────────────────────────────────────
 # { guild_id: { "member_role_id": int, "academy_role_id": int,
-#               "org_role_id": int, "frac_role_id": int,
-#               "access_role_ids": [int, ...],
 #               "channel_id": int, "message_id": int } }
 roster_settings: dict = {}
-
-# { guild_id: { user_id: { "in_org": bool, "in_frac": bool } } }
-roster_members: dict = {}
 
 
 # ─────────────────────────────────────────────
@@ -646,7 +641,6 @@ def save_data():
             "obshak_log_channels":  {str(g): v for g, v in obshak_log_channels.items()},
             "obshak_ping_roles":    {str(g): v for g, v in obshak_ping_roles.items()},
             "roster_settings":      {str(g): v for g, v in roster_settings.items()},
-            "roster_members":       {str(g): {str(u): v for u, v in um.items()} for g, um in roster_members.items()},
             "voice_reward_settings":{str(g): v for g, v in voice_reward_settings.items()},
             "cabinet_panels":       {str(g): v for g, v in cabinet_panels.items()},
             "cabinet_invite_links": {str(g): v for g, v in cabinet_invite_links.items()},
@@ -772,8 +766,6 @@ def load_data():
             obshak_ping_roles[int(g)] = v
         for g, v in data.get("roster_settings", {}).items():
             roster_settings[int(g)] = v
-        for g, um in data.get("roster_members", {}).items():
-            roster_members[int(g)] = {int(u): v for u, v in um.items()}
         for g, v in data.get("vzp_roles2", {}).items():
             vzp_roles2[int(g)] = v
         for g, v in data.get("mp_roles2", {}).items():
@@ -5841,51 +5833,6 @@ async def slash_obshak_all(interaction: discord.Interaction):
 # ═══════════════════════════════════════════════════════════════
 
 # Все фракции: ключ = короткое имя (= имя кастомного эмодзи на сервере)
-FACTIONS = {
-    "LSV":   ("Los Santos Vagos",               "🟡"),
-    "BSG":   ("Bloods Street Gang",             "🔴"),
-    "MG13":  ("Marabunta Grande 13",            "🟣"),
-    "WSF":   ("West Side Front",                "🟢"),
-    "ESB":   ("East Side Ballas",               "🟠"),
-    "LSSD":  ("Sheriff Department",             "🛡️"),
-    "LSPD":  ("Police Department",              "🚔"),
-    "FIB":   ("Federal Investigation Bureau",   "🕵️"),
-    "GOV":   ("Government",                     "🏛️"),
-    "EMS":   ("Emergency Medical Services",     "🚑"),
-    "SASPA": ("San Andreas State Prison Authority", "⛓️"),
-    "ARMY":  ("San Andreas National Guard",     "🪖"),
-    "MEX":   ("Mexican Mafia",                  "🌵"),
-    "LCN":   ("La Cosa Nostra",                 "🤌"),
-    "RM":    ("Russian Mafia",                  "🐻"),
-    "ARM":   ("Armenian Mafia",                 "⚔️"),
-    "YAK":   ("Yakuza",                         "🗡️"),
-}
-NO_FACTION_KEY = "none"
-
-
-def _faction_display(guild: discord.Guild, faction_key: str | None) -> str:
-    """Красивое отображение фракции: эмодзи + полное название."""
-    if not faction_key or faction_key == NO_FACTION_KEY:
-        afk_emoji = discord.utils.get(guild.emojis, name="afk")
-        prefix = str(afk_emoji) + " " if afk_emoji else "😴 "
-        return f"{prefix}Без фракции"
-    entry = FACTIONS.get(faction_key)
-    if not entry:
-        return faction_key
-    full, default_emoji = entry
-    custom = discord.utils.get(guild.emojis, name=faction_key)
-    prefix = (str(custom) + " ") if custom else (default_emoji + " ")
-    return f"{prefix}{full}"
-
-
-def _has_roster_access(interaction: discord.Interaction) -> bool:
-    if is_admin(interaction):
-        return True
-    cfg = roster_settings.get(interaction.guild_id, {})
-    access_ids = set(cfg.get("access_role_ids", []))
-    return any(r.id in access_ids for r in interaction.user.roles)
-
-
 def _chunk_lines(lines: list, chunk_size: int = 10) -> list[list]:
     if not lines:
         return [[]]
@@ -5905,7 +5852,6 @@ async def _collect_roster_lines(guild: discord.Guild):
         except Exception:
             members_list = guild.members
 
-    members_data  = roster_members.get(guild.id, {})
     full_lines    = []
     academy_lines = []
 
@@ -5918,13 +5864,7 @@ async def _collect_roster_lines(guild: discord.Guild):
         if not has_member and not has_academy:
             continue
 
-        ud       = members_data.get(member.id, {})
-        in_org   = ud.get("in_org", False)
-        faction  = ud.get("faction", None)
-
-        org_icon = "✅" if in_org else "❌"
-        frac_str = _faction_display(guild, faction)
-        line     = f"• {member.mention}\n  Организация: {org_icon} | {frac_str}"
+        line = f"• {member.mention}"
 
         if has_academy and not has_member:
             academy_lines.append(line)
@@ -5963,7 +5903,7 @@ async def _refresh_roster(guild: discord.Guild):
 # ── Пагинация состава ──
 
 class RosterPaginationView(ui.View):
-    """Одно сообщение: кнопки ◀ Назад / Вперёд ▶ + счётчик страниц + селекты."""
+    """Одно сообщение: кнопки ◀ Назад / Вперёд ▶ + счётчик страниц."""
 
     PAGE = 10
 
@@ -5977,11 +5917,6 @@ class RosterPaginationView(ui.View):
         self.total         = len(self.full_pages) + len(self.acad_pages)
         self.idx           = max(0, min(idx, self.total - 1))
 
-        # Row 0 — орг-селект
-        self.add_item(RosterOrgSelect())
-        # Row 1 — фракция-селект
-        self.add_item(RosterFracUserSelect())
-        # Row 2 — кнопки навигации (добавляются через _add_nav)
         self._add_nav()
 
     def _add_nav(self):
@@ -6010,19 +5945,19 @@ class RosterPaginationView(ui.View):
             label="◀ Назад",
             style=discord.ButtonStyle.secondary,
             disabled=self.idx == 0,
-            row=2,
+            row=0,
         )
         page_btn = ui.Button(
             label=counter,
             style=discord.ButtonStyle.primary,
             disabled=True,
-            row=2,
+            row=0,
         )
         next_btn = ui.Button(
             label="Вперёд ▶",
             style=discord.ButtonStyle.secondary,
             disabled=self.idx >= self.total - 1,
-            row=2,
+            row=0,
         )
         prev_btn.callback = self._go_prev
         next_btn.callback = self._go_next
@@ -6069,90 +6004,6 @@ class RosterPaginationView(ui.View):
         await interaction.response.edit_message(embed=self.current_embed(), view=self)
 
 
-# ── Кнопки / селекты управления составом ──
-
-class RosterOrgSelect(ui.UserSelect):
-    """Переключить статус «в организации» у выбранного участника."""
-    def __init__(self):
-        super().__init__(
-            placeholder="🏢 Орг ✅/❌ — выбери участника",
-            min_values=1, max_values=1, row=0,
-            custom_id="roster_org_select",
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not _has_roster_access(interaction):
-            return await interaction.response.send_message("❌ Нет доступа!", ephemeral=True)
-        target = self.values[0]
-        gid    = interaction.guild_id
-        roster_members.setdefault(gid, {}).setdefault(target.id, {"in_org": False, "faction": None})
-        ud           = roster_members[gid][target.id]
-        ud["in_org"] = not ud["in_org"]
-        save_data()
-        await _refresh_roster(interaction.guild)
-        status = "✅ в организации" if ud["in_org"] else "❌ не в организации"
-        await interaction.response.send_message(
-            f"{target.mention} теперь **{status}**", ephemeral=True
-        )
-
-
-class RosterFracUserSelect(ui.UserSelect):
-    """Шаг 1 — выбрать участника для смены фракции (ephemeral followup с выбором фракции)."""
-    def __init__(self):
-        super().__init__(
-            placeholder="⚔️ Фракция — выбери участника",
-            min_values=1, max_values=1, row=1,
-            custom_id="roster_frac_user_select",
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        if not _has_roster_access(interaction):
-            return await interaction.response.send_message("❌ Нет доступа!", ephemeral=True)
-        target = self.values[0]
-        await interaction.response.send_message(
-            f"Выбери фракцию для {target.mention}:",
-            view=RosterFracPickView(target.id),
-            ephemeral=True,
-        )
-
-
-class RosterFracSelect(ui.Select):
-    """Шаг 2 — выбрать фракцию из списка."""
-    def __init__(self, target_id: int):
-        self.target_id = target_id
-        options = [
-            discord.SelectOption(label="Без фракции", value=NO_FACTION_KEY, emoji="😴"),
-        ] + [
-            discord.SelectOption(label=f"{short} — {full}", value=short, emoji=emoji)
-            for short, (full, emoji) in FACTIONS.items()
-        ]
-        # Discord ограничивает Select до 25 опций — делим на две страницы если нужно
-        super().__init__(
-            placeholder="Выбери фракцию...",
-            options=options[:25],
-            row=0,
-            custom_id=f"roster_frac_pick_{target_id}",
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        gid     = interaction.guild_id
-        faction = self.values[0]
-        roster_members.setdefault(gid, {}).setdefault(self.target_id, {"in_org": False, "faction": None})
-        roster_members[gid][self.target_id]["faction"] = faction if faction != NO_FACTION_KEY else None
-        save_data()
-        await _refresh_roster(interaction.guild)
-        frac_str = _faction_display(interaction.guild, faction if faction != NO_FACTION_KEY else None)
-        await interaction.response.send_message(
-            f"<@{self.target_id}> → {frac_str}", ephemeral=True
-        )
-
-
-class RosterFracPickView(ui.View):
-    def __init__(self, target_id: int):
-        super().__init__(timeout=60)
-        self.add_item(RosterFracSelect(target_id))
-
-
 # Авто-обновление при смене роли
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
@@ -6194,27 +6045,6 @@ async def slash_roster_setup(
     await _refresh_roster(interaction.guild)
     await interaction.followup.send(
         f"✅ Состав настроен! Панель отправлена в {канал.mention}", ephemeral=True
-    )
-
-
-@tree.command(name="состав_доступ", description="Добавить/убрать роль с доступом к изменению состава")
-@app_commands.describe(роль="Роль которой разрешить управление составом")
-@app_commands.default_permissions(administrator=True)
-async def slash_roster_access(interaction: discord.Interaction, роль: discord.Role):
-    if not is_admin(interaction):
-        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
-    gid  = interaction.guild_id
-    cfg  = roster_settings.setdefault(gid, {})
-    ids  = cfg.setdefault("access_role_ids", [])
-    if роль.id in ids:
-        ids.remove(роль.id)
-        action = "убрана из"
-    else:
-        ids.append(роль.id)
-        action = "добавлена в"
-    save_data()
-    await interaction.response.send_message(
-        f"✅ Роль {роль.mention} **{action}** доступа к управлению составом.", ephemeral=True
     )
 
 

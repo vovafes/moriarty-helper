@@ -1017,8 +1017,6 @@ class JoinButton(ui.Button):
         )
         self.message_id = message_id
 
-    @ui.button(label="✅ Записаться", style=discord.ButtonStyle.success, custom_id=f"join_{self.message_id}")
-    @ui.button(label="Записаться", style=discord.ButtonStyle.success, custom_id=f"join_{self.message_id}")
     async def callback(self, interaction: discord.Interaction):
         data = event_lists.get(self.message_id)
         if not data:

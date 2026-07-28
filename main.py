@@ -238,6 +238,9 @@ obshak_ping_roles: dict = {}
 # { guild_id: channel_id } — голосовой канал для обзвонов
 interview_channels: dict = {}
 
+# { ticket_text_channel_id: voice_channel_id } — войс для обзвона по заявке
+ticket_voice_channels: dict = {}
+
 # { guild_id: [ { "user_id": int, "amount": int, "date": str (ISO) } ] }
 obshak_deposits: dict = {}
 
@@ -4290,8 +4293,6 @@ async def on_ready():
         guild = bot.get_guild(gid)
         if guild:
             await _refresh_roster(guild)
-
-            print(f"WARNING: Could not auto-connect to voice channel {ch_id}: {e}")
 
 
 # ─────────────────────────────────────────────

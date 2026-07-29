@@ -1137,6 +1137,68 @@ class KickButton(ui.Button):
         await interaction.response.send_message("Выбери участника для кика:", view=kick_view, ephemeral=True)
 
 
+class PromoteButton(ui.Button):
+    def __init__(self, message_id: int):
+        super().__init__(
+            label="Убрать с резерва в основу",
+            emoji="⬆️",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"promote_from_reserve_{message_id}",
+        )
+        self.message_id = message_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if not is_admin(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+        data = event_lists.get(self.message_id)
+        if not data:
+            return await interaction.response.send_message("❌ Сбор не найден!", ephemeral=True)
+
+        slots = data["slots"]
+        reserve = data.setdefault("reserve", [])
+        if not reserve:
+            return await interaction.response.send_message("❌ Резерв пуст!", ephemeral=True)
+
+        free_slot = next((i for i in range(1, data["max"] + 1) if slots.get(i) is None), None)
+        if free_slot is None:
+            return await interaction.response.send_message("❌ Нет свободных слотов в основе!", ephemeral=True)
+
+        options = [
+            discord.SelectOption(label=f"Резерв R{i}: {uid}", value=str(i - 1))
+            for i, uid in enumerate(reserve, 1)
+        ][:25]
+
+        class PromoteSelect(ui.Select):
+            def __init__(self_inner):
+                super().__init__(placeholder="Выбери участника для переноса в основу...", options=options)
+
+            async def callback(self_inner, inter: discord.Interaction):
+                idx = int(self_inner.values[0])
+                if not (0 <= idx < len(reserve)):
+                    return await inter.response.edit_message(content="❌ Устарело, попробуй снова", view=None)
+                target_slot = next((i for i in range(1, data["max"] + 1) if slots.get(i) is None), None)
+                if target_slot is None:
+                    return await inter.response.edit_message(content="❌ Нет свободных слотов в основе!", view=None)
+                promoted_uid = reserve.pop(idx)
+                slots[target_slot] = promoted_uid
+                save_data()
+                join_mode = data.get("mode") == "join"
+                embed = build_event_embed(inter.guild_id, data["title"], data["max"], data["slots"], data.get("image_url"), data.get("note"), join_mode=join_mode, event_time=data.get("event_time"), closed=data.get("closed", False), reserve=reserve)
+                try:
+                    ch = bot.get_channel(data["channel_id"])
+                    orig_msg = await ch.fetch_message(self.message_id)
+                    view = JoinEventView(self.message_id) if join_mode else EventView(self.message_id)
+                    await orig_msg.edit(embed=embed, view=view)
+                except Exception:
+                    pass
+                await update_thread_list(self.message_id)
+                await inter.response.edit_message(content=f"✅ <@{promoted_uid}> перенесён из резерва в слот **{target_slot}**", view=None, embed=None)
+
+        promote_view = ui.View(timeout=60)
+        promote_view.add_item(PromoteSelect())
+        await interaction.response.send_message("Выбери участника для переноса в основу:", view=promote_view, ephemeral=True)
+
+
 class CloseListButton(ui.Button):
     def __init__(self, message_id: int, is_closed: bool):
         super().__init__(
@@ -1184,6 +1246,7 @@ class ThreadListView(ui.View):
         super().__init__(timeout=None)
         data = event_lists.get(message_id)
         self.add_item(KickButton(message_id))
+        self.add_item(PromoteButton(message_id))
         self.add_item(CloseListButton(message_id, (data or {}).get("closed", False)))
 
 
@@ -6659,6 +6722,32 @@ def _duration_str(start_ts, end_ts) -> str:
     return f"{m}м {s}с"
 
 
+# Внутренние коды точек ВЗП → читаемое название района (собрано по /stats/organizations/{id}/history)
+VZP_DISTRICT_NAMES = {
+    "STABCITY":                 "Байкерка",
+    "EL_RANCHO_SMALL_OILBASE":  "Малая нефть",
+    "BANNING_ANGAR":            "Мясо",
+    "SANDYSHORES":              "Сенди Шорс",
+    "GHETTO_ANTS":              "Муравейник",
+    "NICOLA_PLACE":             "Тупик Миррор",
+    "PUERTA_DUMP":              "Мусорка",
+    "ELBURRO":                  "Татушка",
+    "WINDFARM":                 "Ветряки",
+    "PB_LUMBER":                "Лесопилка",
+    "PALETOBAY":                "Палето Бей",
+    "MIRROR_PARK":              "Миррор Парк",
+}
+
+
+def _vzp_map_name(event: dict) -> str:
+    """'NEW_S_STABCITY' + pointName 'White Water AC' → 'White Water AC — Байкерка'."""
+    point = event.get("pointName") or "?"
+    code = event.get("map") or ""
+    key = re.sub(r"^NEW_[SB]_", "", code)
+    district = VZP_DISTRICT_NAMES.get(key)
+    return f"{point} — {district}" if district else point
+
+
 def _player_table(players: list) -> str:
     if not players:
         return "```нет данных```"
@@ -6699,7 +6788,7 @@ async def _send_war_started(guild_id: int, event: dict):
     )
     embed.add_field(name="Наша роль",     value=our_side,                        inline=True)
     embed.add_field(name="Противник",     value=opponent,                        inline=True)
-    embed.add_field(name="Карта",         value=event.get("map", "?"),           inline=True)
+    embed.add_field(name="Карта",         value=_vzp_map_name(event),            inline=True)
     embed.add_field(name="Макс. игроков", value=str(event.get("maxPlayers","?")),inline=True)
     embed.add_field(name="Начало",        value=ts_str,                          inline=True)
     embed.set_footer(text="vzp-gta5rp.com")
@@ -6738,6 +6827,7 @@ async def _send_war_result(guild_id: int, event: dict):
     embed.add_field(name="Атака",      value=atk_name,               inline=True)
     embed.add_field(name="Защита",     value=def_name,               inline=True)
     embed.add_field(name="Победитель", value=winner_name or "?",     inline=True)
+    embed.add_field(name="Карта",      value=_vzp_map_name(event),   inline=True)
     embed.add_field(name="Длительность", value=duration,             inline=True)
 
     atk_players = event.get("attackers") or []

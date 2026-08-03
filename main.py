@@ -6784,7 +6784,7 @@ async def _send_war_started(guild_id: int, event: dict):
     embed = discord.Embed(
         title=f"⚔️ ВОЙНА НАЧАЛАСЬ — {event.get('pointName', '?')}",
         color=0xFF8C00,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
     )
     embed.add_field(name="Наша роль",     value=our_side,                        inline=True)
     embed.add_field(name="Противник",     value=opponent,                        inline=True)
@@ -6823,7 +6823,7 @@ async def _send_war_result(guild_id: int, event: dict):
     start_str = f"<t:{start_epoch}:t>" if start_epoch else "—"
     end_str   = f"<t:{end_epoch}:t>"   if end_epoch   else "—"
 
-    embed = discord.Embed(title=title, color=color, timestamp=datetime.now())
+    embed = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
     embed.add_field(name="Атака",      value=atk_name,               inline=True)
     embed.add_field(name="Защита",     value=def_name,               inline=True)
     embed.add_field(name="Победитель", value=winner_name or "?",     inline=True)
@@ -7196,7 +7196,7 @@ async def vzp_history_cmd(interaction: discord.Interaction, количество
     embed = discord.Embed(
         title=f"📜 История войн — {cfg['familyName']}",
         color=0x5865F2,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
     )
     for ev in items[:количество]:
         role     = ev.get("role", "?")

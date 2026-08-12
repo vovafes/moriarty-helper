@@ -2449,14 +2449,8 @@ async def spisok_cmd(ctx):
 
     sorted_ids = sorted(users)
     lines = [f"`{str(i).zfill(2)}.` <@{uid}>" for i, uid in enumerate(sorted_ids, 1)]
-    embed = discord.Embed(
-        title="📋 Список отреагировавших",
-        description="\n".join(lines) + f"\n\n**Всего: {len(sorted_ids)}**",
-        color=discord.Color.blurple(),
-        timestamp=datetime.now(),
-    )
-    embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
-    await ctx.send(embed=embed)
+    text = "📋 **Список отреагировавших**\n" + "\n".join(lines) + f"\n\n**Всего: {len(sorted_ids)}**"
+    await ctx.send(text)
 
 
 # ─────────────────────────────────────────────

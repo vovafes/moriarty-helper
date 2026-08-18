@@ -1323,12 +1323,22 @@ class AfkModal(ui.Modal, title="🕐 Уход в АФК"):
         guild_id = interaction.guild_id
         user_id  = interaction.user.id
 
+        raw = str(self.return_time).strip()
+        import re as _re
+        m = _re.match(r"^([01]?\d|2[0-3]):([0-5]\d)$", raw)
+        if not m:
+            return await interaction.response.send_message(
+                "⚠️ Неверный формат времени. Используй формат **ЧЧ:ММ**, например `18:30`",
+                ephemeral=True,
+            )
+        raw = f"{int(m.group(1)):02d}:{m.group(2)}"
+
         if guild_id not in afk_list:
             afk_list[guild_id] = {}
 
         afk_list[guild_id][user_id] = {
             "reason":      str(self.reason),
-            "return_time": str(self.return_time),
+            "return_time": raw,
             "since":       now_msk(),
         }
         save_data()
@@ -1339,7 +1349,7 @@ class AfkModal(ui.Modal, title="🕐 Уход в АФК"):
             description=(
                 f"🕐 Вы добавлены в АФК-список\n"
                 f"**Причина:** {self.reason}\n"
-                f"**Вернусь в:** `{self.return_time}`"
+                f"**Вернусь в:** `{raw}`"
             ),
             color=discord.Color.blurple(),
         )
@@ -4545,6 +4555,8 @@ async def on_ready():
         game_activity_check_loop.start()
     if not inactive_expire_loop.is_running():
         inactive_expire_loop.start()
+    if not afk_expire_loop.is_running():
+        afk_expire_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
     for gid in list(roster_settings.keys()):
         guild = bot.get_guild(gid)
@@ -7424,6 +7436,39 @@ def _run_health_server():
     port = int(os.getenv("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), _HealthHandler)
     server.serve_forever()
+
+# ─────────────────────────────────────────────
+# ТАЙМЕР АФК — авто-удаление по времени ЧЧ:ММ (МСК)
+# ─────────────────────────────────────────────
+
+@tasks.loop(minutes=1)
+async def afk_expire_loop():
+    """Каждую минуту проверяет АФК-список и снимает тех, чьё время возвращения наступило."""
+    import re as _re
+    now = now_msk()
+    for guild_id, users in list(afk_list.items()):
+        expired = []
+        for uid, entry in users.items():
+            m = _re.match(r"^(\d{2}):(\d{2})$", entry.get("return_time", "").strip())
+            if not m:
+                continue
+            since = entry.get("since")
+            if not isinstance(since, datetime):
+                continue
+            target = since.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+            if target <= since:
+                target += timedelta(days=1)
+            if now >= target:
+                expired.append(uid)
+        if not expired:
+            continue
+        for uid in expired:
+            afk_list[guild_id].pop(uid, None)
+        save_data()
+        guild = bot.get_guild(guild_id)
+        if guild:
+            await refresh_afk_message(guild)
+
 
 # ─────────────────────────────────────────────
 # ТАЙМЕР ИНАКТИВА — авто-удаление по дате ДД.ММ.ГГГГ

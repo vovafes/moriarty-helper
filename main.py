@@ -107,6 +107,20 @@ warns_db: dict = {}
 # { guild_id: { 1: role_id, 2: role_id, 3: role_id } }
 warn_roles: dict = {}
 
+# 📊 СТАТИСТИКА РЕКРУТОВ { guild_id: { user_id: { "approved": int, "rejected": int } } }
+recruit_stats: dict = {}
+
+# ⚠️ КАНАЛ ЛОГОВ ВЫДАЧИ ВАРНОВ РЕКРУТАМИ { guild_id: channel_id }
+warn_log_channels: dict = {}
+
+# ⚠️ СООБЩЕНИЕ О ТЕКУЩЕМ ВАРНЕ (удаляется при снятии)
+# { guild_id: { user_id: { "channel_id": int, "message_id": int } } }
+warn_log_messages: dict = {}
+
+# 🎖 ПАНЕЛЬ КАБИНЕТА РЕКРУТА
+# { guild_id: { "channel_id": int, "message_id": int, "text": str|None, "image_url": str|None } }
+recruit_cabinet_panels: dict = {}
+
 # 🛒 ПАНЕЛЬ МАГАЗИНА
 # { guild_id: { "channel_id": int, "message_id": int } }
 shop_panels: dict = {}
@@ -548,6 +562,31 @@ def remove_warn(guild_id: int, user_id: int) -> bool:
     return False
 
 
+def decrement_warn(guild_id: int, user_id: int) -> int:
+    """Снимает варн ровно на один уровень. Возвращает новый уровень (0 — варнов не осталось, -1 — варнов не было)."""
+    warn_data = get_warns(guild_id, user_id)
+    if not warn_data:
+        return -1
+    new_level = warn_data["warns"] - 1
+    if new_level <= 0:
+        remove_warn(guild_id, user_id)
+        return 0
+    warns_db[guild_id][user_id]["warns"] = new_level
+    save_data()
+    return new_level
+
+
+def get_recruit_stats(guild_id: int, user_id: int) -> dict:
+    return recruit_stats.get(guild_id, {}).get(user_id, {"approved": 0, "rejected": 0})
+
+
+def bump_recruit_stat(guild_id: int, user_id: int, field: str):
+    g = recruit_stats.setdefault(guild_id, {})
+    u = g.setdefault(user_id, {"approved": 0, "rejected": 0})
+    u[field] = u.get(field, 0) + 1
+    save_data()
+
+
 def build_points_embed(guild_id: int, user_id: int) -> discord.Embed:
     points = get_points(guild_id, user_id)
     chips  = get_chips(guild_id, user_id)
@@ -676,6 +715,10 @@ def save_data():
             "vzp_monitor_config":   {str(g): v for g, v in vzp_monitor_config.items()},
             "vzp_processed_events": {str(g): v for g, v in vzp_processed_events.items()},
             "casino_role_luck":     {str(g): {str(r): v for r, v in roles.items()} for g, roles in casino_role_luck.items()},
+            "recruit_stats":        {str(g): {str(u): v for u, v in us.items()} for g, us in recruit_stats.items()},
+            "warn_log_channels":    {str(g): v for g, v in warn_log_channels.items()},
+            "warn_log_messages":    {str(g): {str(u): v for u, v in us.items()} for g, us in warn_log_messages.items()},
+            "recruit_cabinet_panels": {str(g): v for g, v in recruit_cabinet_panels.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -806,6 +849,14 @@ def load_data():
             vzp_processed_events[int(g)] = v
         for g, roles in data.get("casino_role_luck", {}).items():
             casino_role_luck[int(g)] = {int(r): v for r, v in roles.items()}
+        for g, us in data.get("recruit_stats", {}).items():
+            recruit_stats[int(g)] = {int(u): v for u, v in us.items()}
+        for g, v in data.get("warn_log_channels", {}).items():
+            warn_log_channels[int(g)] = v
+        for g, us in data.get("warn_log_messages", {}).items():
+            warn_log_messages[int(g)] = {int(u): v for u, v in us.items()}
+        for g, v in data.get("recruit_cabinet_panels", {}).items():
+            recruit_cabinet_panels[int(g)] = v
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -1412,6 +1463,8 @@ class RejectModal(ui.Modal, title="❌ Причина отклонения"):
                 except Exception:
                     pass
 
+        bump_recruit_stat(interaction.guild_id, interaction.user.id, "rejected")
+
         await interaction.response.send_message(
             "✅ Заявка отклонена. Канал закроется через 10 секунд.", ephemeral=True
         )
@@ -1764,6 +1817,8 @@ class ApplicationReviewView(ui.View):
                 except Exception:
                     pass
 
+        bump_recruit_stat(interaction.guild_id, interaction.user.id, "approved")
+
         await interaction.followup.send("✅ Заявка одобрена.", ephemeral=True)
         close_embed = discord.Embed(
             title="🔒 Тикет закрыт",
@@ -2043,16 +2098,31 @@ class ShopItemButton(ui.Button):
             warn_data = get_warns(guild_id, user_id)
             if not warn_data:
                 return await interaction.response.send_message("✅ У вас нет варнов для снятия!", ephemeral=True)
+            if warn_data["warns"] >= 3:
+                return await interaction.response.send_message(
+                    "❌ Варн 3/3 нельзя снять за баллы. Обратитесь к администрации.", ephemeral=True
+                )
+
+            new_level = decrement_warn(guild_id, user_id)
+
             guild_warn_roles = warn_roles.get(guild_id, {})
-            roles_to_remove = [interaction.guild.get_role(rid) for rid in guild_warn_roles.values()]
+            roles_to_remove = [interaction.guild.get_role(rid) for rid in guild_warn_roles.values() if interaction.guild.get_role(rid)]
+            new_role = interaction.guild.get_role(guild_warn_roles.get(new_level)) if new_level > 0 else None
             try:
-                await interaction.user.remove_roles(*[r for r in roles_to_remove if r], reason="Покупка: снятие варна")
+                await interaction.user.remove_roles(*[r for r in roles_to_remove if r and r != new_role], reason="Покупка: снятие варна")
+                if new_role:
+                    await interaction.user.add_roles(new_role, reason=f"Warn {new_level}/3")
             except Exception:
                 pass
-            remove_warn(guild_id, user_id)
+
+            await _delete_warn_log_message(interaction.guild, user_id)
+
             add_points(guild_id, user_id, -price)
             await _log_shop_purchase(interaction, item, price, action="remove_warn")
-            embed = discord.Embed(title="✅ Варн снят!", description=f"Списано **{price}** 💎", color=discord.Color.green(), timestamp=datetime.now())
+            desc = f"Списано **{price}** 💎" + (
+                f"\nОсталось варнов: **{new_level}/3**" if new_level > 0 else "\nВарнов больше нет!"
+            )
+            embed = discord.Embed(title="✅ Варн снят!", description=desc, color=discord.Color.green(), timestamp=datetime.now())
             embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))
             return await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -3142,6 +3212,7 @@ async def admin_remove_warn(ctx, пользователь: discord.Member):
             await пользователь.remove_roles(*[r for r in roles_to_remove if r], reason="Снятие варна")
         except Exception:
             pass
+        await _delete_warn_log_message(ctx.guild, пользователь.id)
         embed = discord.Embed(
             title="✅ Warn снят",
             description=f"У {пользователь.mention} снят warn",
@@ -3364,11 +3435,14 @@ async def slash_settings(interaction: discord.Interaction):
     )
     afk_p = afk_panels.get(gid, {})
     inact_p = inactive_panels.get(gid, {})
+    rc_p = recruit_cabinet_panels.get(gid, {})
     embed.add_field(
         name="📊 Панели",
         value=(
             f"АФК: {channel_str(afk_p.get('channel_id'))}\n"
-            f"Инактив: {channel_str(inact_p.get('channel_id'))}"
+            f"Инактив: {channel_str(inact_p.get('channel_id'))}\n"
+            f"Кабинет рекрута: {channel_str(rc_p.get('channel_id'))}\n"
+            f"Лог варнов: {channel_str(warn_log_channels.get(gid))}"
         ),
         inline=False,
     )
@@ -3457,7 +3531,8 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
         f"Заявки: {_cs(guild, reject_log_channels.get(gid))}\n"
         f"Магазин: {_cs(guild, shop_log_channels.get(gid))}\n"
         f"Общак: {_cs(guild, obshak_log_channels.get(gid))}\n"
-        f"Feedback: {_cs(guild, fs.get('log_channel_id'))}"
+        f"Feedback: {_cs(guild, fs.get('log_channel_id'))}\n"
+        f"Варны: {_cs(guild, warn_log_channels.get(gid))}"
     ), inline=True)
     e.add_field(name="🎯 Сборы", value=(
         f"ВЗП: {_ecr('vzp')}\n"
@@ -3467,7 +3542,8 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
     e.add_field(name="🔊 Войс / 🖼 Контент", value=(
         f"💎/мин: **{vs.get('amount', 10)}**\n"
         f"Ссылка кабинета: {'✅' if cabinet_invite_links.get(gid) else '⚠️ нет'}\n"
-        f"Fb-роль: {_rs(guild, fs.get('ping_role_id'))}"
+        f"Fb-роль: {_rs(guild, fs.get('ping_role_id'))}\n"
+        f"Кабинет рекрута: {'✅' if recruit_cabinet_panels.get(gid, {}).get('message_id') else '⚠️ не создан'}"
     ), inline=True)
     e.set_footer(text="MORIARTY • Настройки сервера", icon_url=_footer(guild.id))
     return e
@@ -3515,12 +3591,21 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
             f"**Лог магазина:** {_cs(guild, shop_log_channels.get(gid))}\n"
             f"**Лог общака:** {_cs(guild, obshak_log_channels.get(gid))}\n"
             f"**Feedback канал:** {_cs(guild, fs.get('log_channel_id'))}\n"
-            f"**Feedback пинг-роль:** {_rs(guild, fs.get('ping_role_id'))}"
+            f"**Feedback пинг-роль:** {_rs(guild, fs.get('ping_role_id'))}\n"
+            f"**Лог варнов:** {_cs(guild, warn_log_channels.get(gid))}"
         )
     elif category == "fb_role":
         fs = feedback_settings.get(gid) or {}
         e.title = "🔔 Feedback пинг-роль"
         e.description = f"Текущая: {_rs(guild, fs.get('ping_role_id'))}"
+    elif category == "warn_log":
+        e.title = "⚠️ Лог варнов"
+        e.description = (
+            f"Текущий канал: {_cs(guild, warn_log_channels.get(gid))}\n\n"
+            "Сюда рекруты будут отправлять сообщения о выданных варнах "
+            "(через кабинет рекрута). Сообщение автоматически удаляется, "
+            "когда варн снимается."
+        )
     elif category == "events":
         ecr = event_command_roles.get(gid, {})
         def _ecr(t):
@@ -3549,6 +3634,7 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
     elif category == "content":
         fs = feedback_settings.get(gid) or {}
         cp = cabinet_panels.get(gid, {})
+        rcp = recruit_cabinet_panels.get(gid, {})
         op = obshak_panels.get(gid, {})
         link = cabinet_invite_links.get(gid)
         br = guild_branding.get(gid) or {}
@@ -3558,6 +3644,9 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
             f"Текст: {'✅' if cp.get('text') else '⚠️ нет'}  "
             f"Фото: {'✅' if cp.get('image_url') else '⚠️ нет'}  "
             f"Ссылка: {'✅' if link else '⚠️ нет'}\n\n"
+            f"**Кабинет рекрута**\n"
+            f"Текст: {'✅' if rcp.get('text') else '⚠️ нет'}  "
+            f"Фото: {'✅' if rcp.get('image_url') else '⚠️ нет'}\n\n"
             f"**Общак**\n"
             f"Текст: {'✅' if op.get('text') else '⚠️ нет'}  "
             f"Фото: {'✅' if op.get('image_url') else '⚠️ нет'}\n\n"
@@ -3872,10 +3961,33 @@ class _CfgLogsView(ui.View):
         btn_fb_role.callback = _fb
         self.add_item(btn_fb_role)
 
+        btn_warn_log = _cfg_btn("⚠️ Лог варнов →", row=0)
+        async def _wl(inter):
+            await inter.response.edit_message(
+                embed=build_cfg_category_embed(inter.guild, "warn_log"),
+                view=_CfgWarnLogView(inter.guild),
+            )
+        btn_warn_log.callback = _wl
+        self.add_item(btn_warn_log)
+
         self.add_item(_CfgChannelPicker(lambda gid, cid: reject_log_channels.__setitem__(gid, cid), "logs", 1, "📋 Лог заявок — выбери канал"))
         self.add_item(_CfgChannelPicker(lambda gid, cid: shop_log_channels.__setitem__(gid, cid), "logs", 2, "🛍 Лог магазина — выбери канал"))
         self.add_item(_CfgChannelPicker(lambda gid, cid: obshak_log_channels.__setitem__(gid, cid), "logs", 3, "💰 Лог общака — выбери канал"))
         self.add_item(_CfgChannelPicker(lambda gid, cid: feedback_settings.setdefault(gid, {}).__setitem__("log_channel_id", cid), "logs", 4, "💬 Feedback канал — выбери канал"))
+
+
+class _CfgWarnLogView(ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        back = _cfg_btn("◀ Назад к логам", row=0)
+        async def _back(inter):
+            await inter.response.edit_message(
+                embed=build_cfg_category_embed(inter.guild, "logs"),
+                view=_CfgLogsView(inter.guild),
+            )
+        back.callback = _back
+        self.add_item(back)
+        self.add_item(_CfgChannelPicker(lambda gid, cid: warn_log_channels.__setitem__(gid, cid), "warn_log", 1, "⚠️ Лог варнов — выбери канал"))
 
 
 class _CfgFbRoleView(ui.View):
@@ -3998,6 +4110,16 @@ class _CfgContentView(ui.View):
             lambda gid, v: cabinet_invite_links.__setitem__(gid, v),
             "content", row=1))
 
+        # Кабинет рекрута
+        self.add_item(_modal_btn("✏️ Рекрут текст", "Кабинет рекрута — текст", "Текст описания",
+            lambda gid: (recruit_cabinet_panels.get(gid) or {}).get("text", ""),
+            lambda gid, v: recruit_cabinet_panels.setdefault(gid, {}).__setitem__("text", v),
+            "content", row=1, text_style=discord.TextStyle.paragraph, refresh_fn=_refresh_recruit_cabinet_panel))
+        self.add_item(_modal_btn("🖼 Рекрут фото", "Кабинет рекрута — фото", "Ссылка на изображение",
+            lambda gid: (recruit_cabinet_panels.get(gid) or {}).get("image_url", ""),
+            lambda gid, v: recruit_cabinet_panels.setdefault(gid, {}).__setitem__("image_url", v),
+            "content", row=1, refresh_fn=_refresh_recruit_cabinet_panel))
+
         # Общак
         self.add_item(_modal_btn("✏️ Общак текст", "Общак — текст", "Текст описания",
             lambda gid: (obshak_panels.get(gid) or {}).get("text", ""),
@@ -4051,6 +4173,7 @@ def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:
     if cat == "warns":          return _CfgWarnsView()
     if cat == "logs":           return _CfgLogsView(guild)
     if cat == "fb_role":        return _CfgFbRoleView(guild)
+    if cat == "warn_log":       return _CfgWarnLogView(guild)
     if cat == "events":         return _CfgEventsView()
     if cat.startswith("event_"):
         return _CfgEventTypeView(guild, cat.split("_", 1)[1])
@@ -4529,6 +4652,7 @@ async def on_ready():
     bot.add_view(FeedbackPanelView())
     bot.add_view(ObshakView())
     bot.add_view(PersonalCabinetView())
+    bot.add_view(RecruitCabinetView())
     bot.add_view(WarnListView())
     # RosterPaginationView — stateful, восстанавливается через _refresh_roster при запуске
     for guild_id in guild_shop_items:
@@ -5318,6 +5442,239 @@ async def slash_cabinet_invite(interaction: discord.Interaction, ссылка: s
     cabinet_invite_links[interaction.guild_id] = ссылка
     save_data()
     await interaction.response.send_message(f"✅ Пригласительная ссылка установлена: `{ссылка}`", ephemeral=True)
+
+
+# ─────────────────────────────────────────────
+# КАБИНЕТ РЕКРУТА
+# ─────────────────────────────────────────────
+
+DEFAULT_RECRUIT_CABINET_TEXT = "Кабинет рекрута: статистика по заявкам и выдача варнов."
+
+
+def is_recruiter(interaction: discord.Interaction) -> bool:
+    return is_ticket_manager(interaction)
+
+
+def build_recruit_cabinet_embed(guild_id: int) -> discord.Embed:
+    settings  = recruit_cabinet_panels.get(guild_id, {})
+    text      = settings.get("text") or DEFAULT_RECRUIT_CABINET_TEXT
+    image_url = settings.get("image_url")
+
+    embed = discord.Embed(
+        title="🎖 Кабинет рекрута",
+        description=text,
+        color=0x2b2d31,
+    )
+    if image_url:
+        embed.set_image(url=image_url)
+    embed.set_footer(text="MORIARTY", icon_url=_footer(guild_id))
+    return embed
+
+
+async def _refresh_recruit_cabinet_panel(guild: discord.Guild):
+    settings = recruit_cabinet_panels.get(guild.id)
+    if not settings or not settings.get("message_id"):
+        return
+    try:
+        ch  = guild.get_channel(settings["channel_id"])
+        msg = await ch.fetch_message(settings["message_id"])
+        await msg.edit(embed=build_recruit_cabinet_embed(guild.id), view=RecruitCabinetView())
+    except Exception:
+        pass
+
+
+async def _delete_warn_log_message(guild: discord.Guild, user_id: int):
+    """Удаляет сообщение о варне из канала логов (варн снят)."""
+    ref = warn_log_messages.get(guild.id, {}).pop(user_id, None)
+    if ref is None:
+        return
+    save_data()
+    try:
+        ch = guild.get_channel(ref["channel_id"])
+        if ch:
+            msg = await ch.fetch_message(ref["message_id"])
+            await msg.delete()
+    except Exception:
+        pass
+
+
+class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
+    user_id_input = ui.TextInput(label="ID пользователя", placeholder="123456789012345678", required=True)
+    reason_input  = ui.TextInput(label="Причина", style=discord.TextStyle.paragraph, required=True)
+    level_input   = ui.TextInput(label="Номер варна (1, 2 или 3)", placeholder="1", required=True, max_length=1)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+
+        try:
+            target_id = int(str(self.user_id_input).strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ Некорректный ID пользователя.", ephemeral=True)
+
+        try:
+            level = int(str(self.level_input).strip())
+        except ValueError:
+            level = 0
+        if level not in (1, 2, 3):
+            return await interaction.response.send_message("❌ Номер варна должен быть 1, 2 или 3.", ephemeral=True)
+
+        member = guild.get_member(target_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(target_id)
+            except Exception:
+                return await interaction.response.send_message("❌ Пользователь не найден на сервере.", ephemeral=True)
+
+        reason = str(self.reason_input)
+
+        await interaction.response.defer(ephemeral=True)
+
+        set_warn(guild.id, member.id, level, reason, interaction.user.id)
+
+        guild_warn_roles = warn_roles.get(guild.id, {})
+        roles_to_remove = [guild.get_role(rid) for rid in guild_warn_roles.values() if guild.get_role(rid)]
+        new_role = guild.get_role(guild_warn_roles.get(level))
+        try:
+            await member.remove_roles(*[r for r in roles_to_remove if r and r != new_role], reason="Обновление варн-роли")
+            if new_role:
+                await member.add_roles(new_role, reason=f"Warn {level}/3")
+        except Exception:
+            pass
+
+        removable = "баллами в магазине" if level in (1, 2) else "только через администрацию"
+
+        log_embed = discord.Embed(
+            title="⚠️ Выдан варн",
+            color=0x2b2d31,
+            timestamp=datetime.now(),
+        )
+        log_embed.add_field(name="Пользователь", value=member.mention, inline=True)
+        log_embed.add_field(name="Варн", value=f"**{level}/3**", inline=True)
+        log_embed.add_field(name="Снять можно", value=removable, inline=True)
+        log_embed.add_field(name="Причина", value=reason, inline=False)
+        log_embed.add_field(name="Выдал", value=interaction.user.mention, inline=False)
+        log_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+
+        log_ch_id = warn_log_channels.get(guild.id)
+        log_ch = guild.get_channel(log_ch_id) if log_ch_id else None
+        if log_ch:
+            try:
+                await _delete_warn_log_message(guild, member.id)
+                msg = await log_ch.send(embed=log_embed)
+                warn_log_messages.setdefault(guild.id, {})[member.id] = {
+                    "channel_id": log_ch.id,
+                    "message_id": msg.id,
+                }
+                save_data()
+            except Exception:
+                pass
+
+        try:
+            dm_embed = discord.Embed(
+                title="⚠️ Вы получили warn",
+                description=f"**Причина:** {reason}\n**Варны:** {level}/3",
+                color=discord.Color.red(),
+                timestamp=datetime.now(),
+            )
+            dm_embed.add_field(name="Модератор", value=interaction.user.mention)
+            dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+            await member.send(embed=dm_embed)
+        except Exception:
+            pass
+
+        await interaction.followup.send(f"✅ Варн {level}/3 выдан {member.mention}.", ephemeral=True)
+
+
+class RecruitCabinetView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(label="Статистика", emoji="📊", style=discord.ButtonStyle.secondary, custom_id="recruit_cabinet_stats", row=0)
+    async def btn_stats(self, interaction: discord.Interaction, button: ui.Button):
+        stats = get_recruit_stats(interaction.guild_id, interaction.user.id)
+        embed = discord.Embed(
+            title="📊 Статистика рекрута",
+            color=0x2b2d31,
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="✅ Одобрено заявок", value=str(stats.get("approved", 0)), inline=True)
+        embed.add_field(name="❌ Отклонено заявок", value=str(stats.get("rejected", 0)), inline=True)
+        embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @ui.button(label="Выдать варн", emoji="⚠️", style=discord.ButtonStyle.danger, custom_id="recruit_cabinet_warn", row=0)
+    async def btn_warn(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_recruiter(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+        await interaction.response.send_modal(IssueWarnModal())
+
+
+@tree.command(name="кабинет_рекрута", description="Создать панель кабинета рекрута в текущем канале")
+async def slash_recruit_cabinet(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+
+    gid = interaction.guild_id
+
+    existing = recruit_cabinet_panels.get(gid)
+    if existing and existing.get("message_id"):
+        try:
+            old_ch  = interaction.guild.get_channel(existing["channel_id"])
+            old_msg = await old_ch.fetch_message(existing["message_id"])
+            await old_msg.delete()
+        except Exception:
+            pass
+
+    prev  = recruit_cabinet_panels.get(gid, {})
+    embed = build_recruit_cabinet_embed(gid)
+    msg   = await interaction.channel.send(embed=embed, view=RecruitCabinetView())
+
+    recruit_cabinet_panels[gid] = {
+        "channel_id": interaction.channel_id,
+        "message_id": msg.id,
+        "text":       prev.get("text"),
+        "image_url":  prev.get("image_url"),
+    }
+    save_data()
+    await interaction.response.send_message("✅ Кабинет рекрута создан.", ephemeral=True)
+
+
+@tree.command(name="кабинет_рекрута_фото", description="Изменить фото панели кабинета рекрута")
+@app_commands.describe(url="Ссылка на изображение")
+async def slash_recruit_cabinet_photo(interaction: discord.Interaction, url: str):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    gid = interaction.guild_id
+    if gid not in recruit_cabinet_panels:
+        recruit_cabinet_panels[gid] = {}
+    recruit_cabinet_panels[gid]["image_url"] = url
+    save_data()
+    await _refresh_recruit_cabinet_panel(interaction.guild)
+    await interaction.response.send_message("✅ Фото кабинета рекрута обновлено!", ephemeral=True)
+
+
+@tree.command(name="кабинет_рекрута_текст", description="Изменить текст описания кабинета рекрута")
+@app_commands.describe(текст="Текст под заголовком")
+async def slash_recruit_cabinet_text(interaction: discord.Interaction, текст: str):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    gid = interaction.guild_id
+    if gid not in recruit_cabinet_panels:
+        recruit_cabinet_panels[gid] = {}
+    recruit_cabinet_panels[gid]["text"] = текст
+    save_data()
+    await _refresh_recruit_cabinet_panel(interaction.guild)
+    await interaction.response.send_message("✅ Текст кабинета рекрута обновлён!", ephemeral=True)
+
+
+@tree.command(name="канал_варнов", description="Установить канал для логов выдачи варнов рекрутами")
+@app_commands.describe(канал="Текстовый канал для логов варнов")
+async def slash_warn_log_channel(interaction: discord.Interaction, канал: discord.TextChannel):
+    if not is_admin(interaction):
+        return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+    warn_log_channels[interaction.guild_id] = канал.id
+    save_data()
+    await interaction.response.send_message(f"✅ Канал логов варнов установлен: {канал.mention}", ephemeral=True)
 
 
 # ─────────────────────────────────────────────

@@ -2415,6 +2415,7 @@ async def set_list_role2(ctx, роль: discord.Role):
     app_commands.Choice(name="vzp", value="vzp"),
     app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
+    app_commands.Choice(name="reaki", value="reaki"),
 ])
 async def slash_event_access_add(interaction: discord.Interaction, тип: str, роль: discord.Role):
     if not is_admin(interaction):
@@ -2443,6 +2444,7 @@ async def slash_event_access_add(interaction: discord.Interaction, тип: str, 
     app_commands.Choice(name="vzp", value="vzp"),
     app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
+    app_commands.Choice(name="reaki", value="reaki"),
 ])
 async def slash_event_access_remove(interaction: discord.Interaction, тип: str, роль: discord.Role):
     if not is_admin(interaction):
@@ -2634,6 +2636,44 @@ async def slash_list(
     картинка: discord.Attachment = None,
 ):
     if not _can_run_event_slash(interaction, "list"):
+        return await interaction.response.send_message("❌ Нет доступа к этой команде.", ephemeral=True)
+    await interaction.response.defer()
+    image_file, image_ref = None, None
+    if картинка:
+        try:
+            img_bytes = await картинка.read()
+            ext = картинка.filename.rsplit(".", 1)[-1].lower() if "." in картинка.filename else "png"
+            safe_name = f"event_image.{ext}"
+            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
+            image_ref = f"attachment://{safe_name}"
+        except Exception:
+            pass
+    mentions = []
+    for rid in [event_roles.get(interaction.guild_id), list_roles2.get(interaction.guild_id)]:
+        if rid:
+            r = interaction.guild.get_role(rid)
+            if r:
+                mentions.append(r.mention)
+    content = " ".join(mentions) if mentions else None
+    await interaction.delete_original_response()
+    await _create_event_message(interaction.channel, interaction.guild, название, количество, image_file, image_ref, content=content, force_join_mode=True, event_time=время, cmd="list")
+
+
+@tree.command(name="reaki", description="Создать сбор реакций (тегает роль реаки)")
+@app_commands.describe(
+    количество="Максимум участников (по умолчанию 10)",
+    название="Название сбора (по умолчанию Реакции)",
+    время="Время сбора (например 20:00)",
+    картинка="Прикрепить изображение к сбору",
+)
+async def slash_reaki(
+    interaction: discord.Interaction,
+    количество: app_commands.Range[int, 1] = 10,
+    название: str = "Реакции",
+    время: str = None,
+    картинка: discord.Attachment = None,
+):
+    if not _can_run_event_slash(interaction, "reaki"):
         return await interaction.response.send_message("❌ Нет доступа к этой команде.", ephemeral=True)
     await interaction.response.defer()
     image_file, image_ref = None, None
@@ -4806,6 +4846,58 @@ async def update_stats():
 
 
 # ─────────────────────────────────────────────
+# ТАБЛИЦА ЛИДЕРОВ
+# ─────────────────────────────────────────────
+
+@tree.command(name="топ", description="Таблица лидеров сервера")
+@app_commands.describe(категория="Выбери категорию: баллы, сообщения или войс")
+@app_commands.choices(категория=[
+    app_commands.Choice(name="💎 Баллы",         value="points"),
+    app_commands.Choice(name="💬 Сообщения",      value="messages"),
+    app_commands.Choice(name="🎙 Минуты в войсе", value="voice"),
+])
+async def slash_top(interaction: discord.Interaction, категория: str = "points"):
+    gid = interaction.guild_id
+
+    if категория == "points":
+        raw   = points_db.get(gid, {})
+        title = "💎 Топ по баллам"
+        label = "💎"
+    elif категория == "messages":
+        raw   = message_counts.get(gid, {})
+        title = "💬 Топ по сообщениям"
+        label = "сообщ."
+    else:
+        # Войс: сохранённые минуты + текущая сессия
+        raw = dict(voice_minutes.get(gid, {}))
+        for uid, join_t in voice_join_times.get(gid, {}).items():
+            extra = int((datetime.now() - join_t).total_seconds() // 60)
+            raw[uid] = raw.get(uid, 0) + extra
+        title = "🎙 Топ по минутам в войсе"
+        label = "мин."
+
+    sorted_data = sorted(raw.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    if not sorted_data:
+        return await interaction.response.send_message("📊 Данных пока нет.", ephemeral=True)
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines  = []
+    for i, (uid, val) in enumerate(sorted_data):
+        medal = medals[i] if i < 3 else f"`{i+1}.`"
+        lines.append(f"{medal} <@{uid}> — **{val:,}** {label}".replace(",", "."))
+
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(lines),
+        color=discord.Color.gold(),
+        timestamp=datetime.now(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(gid))
+    await interaction.response.send_message(embed=embed)
+
+
+# ─────────────────────────────────────────────
 # КОНТРАКТЫ
 # ─────────────────────────────────────────────
 
@@ -5541,7 +5633,7 @@ class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
         except Exception:
             pass
 
-        removable = "баллами в магазине" if level in (1, 2) else "только через администрацию"
+        removable = "баллами в магазине / деньгами" if level in (1, 2) else "только деньгами"
 
         log_embed = discord.Embed(
             title="⚠️ Выдан варн",

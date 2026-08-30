@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237186
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-sredstvax-massovoi-informacii-v-shtate-san-andreas.3237186/#post-8856158
-- **Скрейп**: 2026-06-16T16:12:24
+- **Скрейп**: 2026-08-30T12:09:14
 - **Чанков**: 35
 - **Длина текста**: 22115 символов
 

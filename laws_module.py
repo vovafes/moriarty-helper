@@ -141,42 +141,80 @@ def track_usage(input_tokens: int, output_tokens: int, headers: dict | None) -> 
 
 _FTS_SAFE = re.compile(r"[^\w\sа-яА-ЯёЁ.-]+", re.UNICODE)
 
+# Общие/служебные слова — если их OR'ить наравне со смысловыми словами вопроса,
+# они забивают топ-K нерелевантными кусками (совпадают почти везде в базе).
+_STOPWORDS = {
+    "что", "как", "какой", "какая", "какие", "какое", "каком", "какому", "какого",
+    "если", "будет", "это", "эти", "этот", "эта", "для", "кто", "где",
+    "когда", "почему", "зачем", "или", "либо", "при", "про", "мне", "нам",
+    "можно", "нужно", "надо", "есть", "быть", "был", "была", "были", "будут",
+    "меня", "тебя", "его", "её", "их", "вас", "нас", "то", "все", "всё",
+    "такое", "такой", "такая", "такие", "они", "она", "оно", "тот", "эту",
+    # предлоги / союзы / частицы
+    "за", "по", "на", "в", "во", "и", "с", "со", "у", "от", "до", "об", "обо",
+    "не", "ли", "же", "бы", "б", "а", "но", "да", "из", "из-за", "к", "ко",
+    "о", "то", "ну", "ведь", "чтобы", "также", "тоже", "уже", "ещё", "еще",
+    "лишь", "только", "именно", "даже", "вот", "тут", "там", "здесь", "туда",
+}
 
-def _fts_query(question: str) -> str:
-    """Чистим вопрос для FTS5 MATCH: оставляем слова, делаем OR-запрос."""
+
+def _words(question: str) -> list[str]:
     q = _FTS_SAFE.sub(" ", question)
-    words = [w for w in q.split() if len(w) >= 2]
-    # Кавычки и * вокруг каждого слова — префиксный поиск + OR
+    return [w for w in q.split() if len(w) >= 2]
+
+
+def _fts_query(words: list[str], op: str) -> str:
+    """Строит FTS5 MATCH-запрос: каждое слово — префиксный матч, склеенные через op (AND/OR)."""
     parts = [f'"{w}"*' for w in words]
-    return " OR ".join(parts) if parts else '""'
+    return f" {op} ".join(parts) if parts else '""'
+
+
+def _run_query(conn: sqlite3.Connection, query: str, top_k: int) -> list[dict]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT laws.law_name, laws.article_code, laws.body, laws.url
+            FROM laws_fts
+            JOIN laws ON laws.id = laws_fts.rowid
+            WHERE laws_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (query, top_k),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [
+        {"law_name": n, "article_code": c, "body": b, "url": u}
+        for n, c, b, u in rows
+    ]
 
 
 def _search_sync(question: str, top_k: int) -> list[dict]:
     if not Path(DB_FILE).exists():
         return []
+    all_words = _words(question)
+    if not all_words:
+        return []
+    significant = [w for w in all_words if w.lower() not in _STOPWORDS]
+
     conn = sqlite3.connect(DB_FILE)
     try:
-        query = _fts_query(question)
-        if query == '""':
-            return []
-        try:
-            rows = conn.execute(
-                """
-                SELECT laws.law_name, laws.article_code, laws.body, laws.url
-                FROM laws_fts
-                JOIN laws ON laws.id = laws_fts.rowid
-                WHERE laws_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (query, top_k),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            return []
-        return [
-            {"law_name": n, "article_code": c, "body": b, "url": u}
-            for n, c, b, u in rows
-        ]
+        # 1) Сначала строгий AND по значимым словам — прицельно бьёт в нужный документ,
+        #    не давая общим словам вопроса ("что", "если", "будет") размывать топ-K.
+        if significant:
+            results = _run_query(conn, _fts_query(significant, "AND"), top_k)
+            if results:
+                return results
+
+        # 2) Не нашли пересечение всех слов сразу — пробуем OR по значимым словам.
+        if significant:
+            results = _run_query(conn, _fts_query(significant, "OR"), top_k)
+            if results:
+                return results
+
+        # 3) Совсем короткий/служебный вопрос — последний шанс с исходными словами.
+        return _run_query(conn, _fts_query(all_words, "OR"), top_k)
     finally:
         conn.close()
 

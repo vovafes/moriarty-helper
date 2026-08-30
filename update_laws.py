@@ -1,14 +1,22 @@
 """
-update_laws.py — разовый скрейпер законодательной базы Murrieta (Сервер №20).
+update_laws.py — скрейпер правил и законодательной базы Murrieta (Сервер №20).
 
-Тянет 33 темы из раздела «Законодательная база» форума gta5rp.com,
-парсит первый пост каждой темы, разбивает на чанки и кладёт в laws.sqlite
+Источники:
+  1. THREADS / MULTI_THREADS — захардкоженный список тем «Законодательная база»
+     (Конституция, кодексы, судебные прецеденты) — форум не входит в ROOT_FORUM_URLS,
+     поэтому список тем поддерживается вручную.
+  2. ROOT_FORUM_URLS — динамический обход: «Правила проекта» и «Правила сервера
+     Murrieta» со ВСЕМИ подразделами и ВСЕМИ темами внутри. Новые/удалённые темы
+     подхватываются сами при следующем запуске, руками список поддерживать не нужно.
+
+Парсит первый пост каждой темы, разбивает на чанки и кладёт в laws.sqlite
 с FTS5-индексом для быстрого поиска BM25.
 
 Запуск:
-    python update_laws.py              # обновить всю базу
-    python update_laws.py --thread 3237255   # только одну тему
-    python update_laws.py --stats      # показать что в базе сейчас
+    python update_laws.py                    # обновить всю базу (обход + статика)
+    python update_laws.py --no-discover       # только статические THREADS/MULTI_THREADS
+    python update_laws.py --thread 3237255    # только одну тему (без обхода разделов)
+    python update_laws.py --stats             # показать что в базе сейчас
 """
 
 import argparse
@@ -65,46 +73,15 @@ THREADS = [
     (3237176, "zakon-o-sluzhbe-sudebnyx-marshalov-ssha-usms", "Закон «О USMS»"),
     (3237170, "zakon-ob-upravlenii-gosudarstvennoi-sobstvennostju", "Закон «Об управлении гос. собственностью»"),
 
-    # ─── Общие правила сервера (forum 1699) ───
-    (3237321, "pravila-servera-murrieta", "Правила сервера Murrieta"),
-    (3237311, "pravila-i-objazannosti-liderov", "Правила и обязанности лидеров"),
-    (3237309, "pravila-zelenyx-zon", "Правила Зелёных Зон"),
+]
 
-    # ─── Правила для государственных организаций (forum 1700) ───
-    (3237046, "pravila-gosudarstvennyx-struktur", "Правила государственных структур"),
-    (3404104, "polozhenie-o-vneshnem-vide-gos-sotrudnikov", "Положение о внешнем виде гос. сотрудников"),
-    (3259111, "monopolist", "MONOPOLIST (правила гос. структур)"),
-    (3237079, "nonrp-deistvija-dlja-sotrudnikov-gosudarstvennyx-struktur", "NonRP действия для сотрудников гос. структур"),
-    (3237045, "pravila-provedenija-doprosov", "Правила проведения допросов (гос.)"),
-    (3237044, "pravila-reidov", "Правила рейдов"),
-    (3237043, "pravila-vnedrenii-v-kriminalnye-organizacii", "Правила внедрений в криминальные организации"),
-    (3237033, "pravila-snjatija-liderov-gosudarstvennyx-struktur", "Правила снятия лидеров гос. структур"),
-
-    # ─── Правила для криминальных организаций (forum 1701) ───
-    (3237100, "pravila-kriminalnyx-frakcii", "Правила криминальных фракций"),
-    (3237087, "titulnye-raiony", "Титульные районы (крим.)"),
-    (3251104, "pravila-kazny-i-sklada-kriminalnyx-frakcii", "Правила казны и склада крим. фракций"),
-    (3237099, "pravila-provedenija-doprosov-dlja-kriminalnyx-frakcii", "Правила проведения допросов (крим.)"),
-    (3237097, "pravila-ograblenija-ammunation-poezda", "Правила ограбления Ammunation и поезда"),
-    (3237096, "pravila-ograblenii-poxischenii", "Правила ограблений и похищений"),
-    (3237095, "pravila-napadenija-na-fort-zankudo-saspa", "Правила нападения на Форт Занкудо и SASPA"),
-    (3237094, "pravila-bizvarov", "Правила бизваров"),
-    (3237090, "pravila-kaptov", "Правила каптов"),
-    (3237089, "pravila-voiny-za-graffiti", "Правила Войны за Граффити"),
-    (3237086, "pravila-zaxvata-gosudarstvennyx-organizacii", "Правила захвата гос. организаций"),
-    (3237084, "pravila-voiny-za-xammery", "Правила Войны за Хаммеры"),
-    # Ивенты и механики
-    (3345574, "battle-pass", "Battle Pass (механика)"),
-    (3405518, "kriminalnyi-perepolox", "Криминальный переполох (ивент)"),
-    (3387384, "territorija-x", "Территория X (ивент)"),
-    (3387366, "bolshoi-ugon", "Большой угон (ивент)"),
-    (3287683, "ograblenie-po-amerikanski", "Ограбление по-американски (ивент)"),
-    (3254769, "rehket-klubov", "Рэкет клубов (ивент)"),
-
-    # ─── Правила для неофициальных организаций (forum 1702) ───
-    (3237141, "titulnye-raiony-neoficialnyx-organizacii", "Титульные районы (неофиц.)"),
-    (3237139, "pravila-dlja-organizacii-s-funkcionalnymi-razreshenijami", "Правила для организаций с функц. разрешениями"),
-    (3237137, "voina-semei-zaxvat-kaio-periko-tochki-vlijanija", "Война семей / Захват Кайо-Перико / Точки влияния"),
+# ─── Разделы, которые обходим ДИНАМИЧЕСКИ (все подразделы + все темы) ───
+# Правила проекта в целом + правила сервера Murrieta. Больше не нужно вручную
+# добавлять thread_id при появлении новых тем — скрипт сам находит все подразделы
+# (node--forum) и все темы (structItem--thread) внутри них рекурсивно.
+ROOT_FORUM_URLS = [
+    "https://forum.gta5rp.com/forums/pravila-proyekta.5/",
+    "https://forum.gta5rp.com/forums/pravila-servera-murrieta.1691/",
 ]
 
 # Темы со множеством постов и мусором — обходим все страницы и фильтруем по автору.
@@ -224,6 +201,80 @@ def extract_max_page(html: str) -> int:
     if not nums:
         return 1
     return max(int(n) for n in nums)
+
+
+def _extract_subforums(html: str) -> list[str]:
+    """Ссылки на подразделы (node--forum) на странице раздела форума."""
+    soup = BeautifulSoup(html, "html.parser")
+    urls = []
+    for node in soup.select("div.node--forum"):
+        a = node.select_one(".node-title a")
+        if a and a.get("href"):
+            urls.append(FORUM_BASE + a["href"])
+    return urls
+
+
+THREAD_LINK_RE = re.compile(r"^/threads/([a-z0-9-]+)\.(\d+)/$")
+
+
+def _extract_threads(html: str) -> list[tuple[int, str, str]]:
+    """Темы (structItem--thread) на странице раздела: [(tid, slug, title)]."""
+    soup = BeautifulSoup(html, "html.parser")
+    threads = []
+    seen = set()
+    for item in soup.select("div.structItem--thread"):
+        title_div = item.select_one(".structItem-title")
+        if not title_div:
+            continue
+        a = None
+        for cand in title_div.select("a[href^='/threads/']"):
+            if "labelLink" in (cand.get("class") or []):
+                continue
+            a = cand
+            break
+        if not a:
+            continue
+        m = THREAD_LINK_RE.match(a["href"])
+        if not m:
+            continue
+        slug, tid = m.group(1), int(m.group(2))
+        if tid in seen:
+            continue
+        seen.add(tid)
+        threads.append((tid, slug, a.get_text(strip=True)))
+    return threads
+
+
+def discover_forum_tree(root_url: str, max_depth: int = 5) -> list[tuple[int, str, str]]:
+    """
+    Рекурсивно обходит раздел форума: все вложенные подразделы + все темы во всех
+    (включая пагинированные) списках тем. Возвращает [(tid, slug, title), ...] без дублей.
+    """
+    visited_forums: set[str] = set()
+    found: dict[int, tuple[str, str]] = {}
+
+    def visit(url: str, depth: int) -> None:
+        if url in visited_forums or depth > max_depth:
+            return
+        visited_forums.add(url)
+        html = fetch(url)
+
+        for tid, slug, title in _extract_threads(html):
+            found.setdefault(tid, (slug, title))
+
+        n_pages = extract_max_page(html)
+        for p in range(2, n_pages + 1):
+            time.sleep(0.5)
+            page_html = fetch(url + f"page-{p}")
+            for tid, slug, title in _extract_threads(page_html):
+                found.setdefault(tid, (slug, title))
+
+        for sub_url in _extract_subforums(html):
+            time.sleep(0.5)
+            visit(sub_url, depth + 1)
+
+    visit(root_url, 0)
+    return [(tid, slug, title) for tid, (slug, title) in found.items()]
 
 
 PRECEDENT_HEADER = re.compile(
@@ -531,6 +582,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--thread", type=int, help="Обработать только одну тему по ID")
     parser.add_argument("--stats", action="store_true", help="Показать содержимое БД и выйти")
+    parser.add_argument(
+        "--no-discover", action="store_true",
+        help="Не обходить ROOT_FORUM_URLS динамически (только THREADS/MULTI_THREADS)",
+    )
     args = parser.parse_args()
 
     conn = sqlite3.connect(DB_FILE)
@@ -553,11 +608,33 @@ def main() -> int:
 
     single_targets = list(THREADS)
     multi_targets = list(MULTI_THREADS)
+    known_ids = {t[0] for t in THREADS} | {t["tid"] for t in MULTI_THREADS}
+
+    if not args.no_discover and not args.thread:
+        print(f"Обхожу {len(ROOT_FORUM_URLS)} раздела форума (подразделы + темы)...")
+        for root_url in ROOT_FORUM_URLS:
+            print(f"  → {root_url}")
+            try:
+                discovered = discover_forum_tree(root_url)
+            except Exception as e:
+                print(f"    ✗ ОШИБКА обхода раздела: {e}")
+                continue
+            new_count = 0
+            for tid, slug, title in discovered:
+                if tid in known_ids:
+                    continue  # уже покрыт статическим списком (напр. Законодательная база)
+                known_ids.add(tid)
+                single_targets.append((tid, slug, title))
+                new_count += 1
+            print(f"    найдено тем: {len(discovered)}, новых: {new_count}")
+        print()
+
     if args.thread:
-        single_targets = [t for t in THREADS if t[0] == args.thread]
-        multi_targets = [t for t in MULTI_THREADS if t["tid"] == args.thread]
+        single_targets = [t for t in single_targets if t[0] == args.thread]
+        multi_targets = [t for t in multi_targets if t["tid"] == args.thread]
         if not single_targets and not multi_targets:
-            print(f"Тема {args.thread} не найдена ни в THREADS, ни в MULTI_THREADS.")
+            print(f"Тема {args.thread} не найдена ни в THREADS/MULTI_THREADS, "
+                  f"ни в обнаруженных разделах (обход при --thread не выполняется).")
             return 1
 
     total = len(single_targets) + len(multi_targets)
@@ -589,8 +666,30 @@ def main() -> int:
             print(f"    ✗ ОШИБКА: {e}\n")
         time.sleep(0.6)
 
+    pruned = 0
+    if not args.thread and fail == 0:
+        current_ids = {t[0] for t in single_targets} | {t["tid"] for t in multi_targets}
+        stale = [
+            row[0] for row in
+            conn.execute("SELECT DISTINCT thread_id FROM laws").fetchall()
+            if row[0] not in current_ids
+        ]
+        for tid in stale:
+            row = conn.execute(
+                "SELECT law_name FROM laws WHERE thread_id = ? LIMIT 1", (tid,)
+            ).fetchone()
+            law_name = row[0] if row else "?"
+            n = conn.execute("DELETE FROM laws WHERE thread_id = ?", (tid,)).rowcount
+            conn.commit()
+            pruned += n
+            print(f"  ✂ удалена устаревшая тема {tid} «{law_name}» ({n} чанков — "
+                  f"темы больше нет в текущем обходе разделов)")
+            for md in RAW_DIR.glob(f"{tid}_*.md"):
+                md.unlink()
+
     print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(f"Готово: {ok} OK, {fail} ошибок, {total_chunks} чанков всего.")
+    print(f"Готово: {ok} OK, {fail} ошибок, {total_chunks} чанков всего"
+          f"{f', удалено устаревших: {pruned}' if pruned else ''}.")
     print(f"База: {DB_FILE}")
     return 0 if fail == 0 else 2
 

@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237182
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-registracii-transportnyx-sredstv.3237182/#post-8856151
-- **Скрейп**: 2026-06-16T16:12:27
+- **Скрейп**: 2026-08-30T12:09:17
 - **Чанков**: 12
 - **Длина текста**: 6400 символов
 

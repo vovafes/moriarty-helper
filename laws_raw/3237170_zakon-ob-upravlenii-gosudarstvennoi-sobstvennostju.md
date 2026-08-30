@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237170
 - **URL**: https://forum.gta5rp.com/threads/zakon-ob-upravlenii-gosudarstvennoi-sobstvennostju.3237170/#post-8856128
-- **Скрейп**: 2026-06-16T16:12:32
+- **Скрейп**: 2026-08-30T12:09:23
 - **Чанков**: 31
 - **Длина текста**: 6922 символов
 

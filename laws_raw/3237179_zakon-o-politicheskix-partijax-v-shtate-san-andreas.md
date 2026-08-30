@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237179
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-politicheskix-partijax-v-shtate-san-andreas.3237179/#post-8856147
-- **Скрейп**: 2026-06-16T16:12:29
+- **Скрейп**: 2026-08-30T12:09:19
 - **Чанков**: 44
 - **Длина текста**: 11035 символов
 

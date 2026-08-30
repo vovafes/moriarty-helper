@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237183
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-rozyske-grazhdan-v-shtate-san-andreas.3237183/#post-8856152
-- **Скрейп**: 2026-06-16T16:12:26
+- **Скрейп**: 2026-08-30T12:09:16
 - **Чанков**: 24
 - **Длина текста**: 18555 символов
 

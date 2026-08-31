@@ -8005,23 +8005,26 @@ def _run_health_server():
 
 @tasks.loop(minutes=1)
 async def afk_expire_loop():
-    """Каждую минуту проверяет АФК-список и снимает тех, чьё время возвращения наступило."""
+    """Каждую минуту проверяет АФК-список и снимает тех, чьё время возвращения наступило (МСК)."""
     import re as _re
     now = now_msk()
     for guild_id, users in list(afk_list.items()):
         expired = []
-        for uid, entry in users.items():
-            m = _re.match(r"^(\d{2}):(\d{2})$", entry.get("return_time", "").strip())
-            if not m:
-                continue
-            since = entry.get("since")
-            if not isinstance(since, datetime):
-                continue
-            target = since.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
-            if target <= since:
-                target += timedelta(days=1)
-            if now >= target:
-                expired.append(uid)
+        for uid, entry in list(users.items()):
+            try:
+                m = _re.match(r"^(\d{2}):(\d{2})$", entry.get("return_time", "").strip())
+                if not m:
+                    continue
+                since = entry.get("since")
+                if not isinstance(since, datetime):
+                    continue
+                target = since.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+                if target <= since:
+                    target += timedelta(days=1)
+                if now >= target:
+                    expired.append(uid)
+            except Exception as e:
+                print(f"WARNING: afk_expire_loop bad entry guild={guild_id} user={uid}: {e}")
         if not expired:
             continue
         for uid in expired:
@@ -8032,28 +8035,35 @@ async def afk_expire_loop():
             await refresh_afk_message(guild)
 
 
+@afk_expire_loop.error
+async def afk_expire_loop_error(error: Exception):
+    print(f"WARNING: afk_expire_loop crashed, restarting: {error}")
+    if not afk_expire_loop.is_running():
+        afk_expire_loop.restart()
+
+
 # ─────────────────────────────────────────────
-# ТАЙМЕР ИНАКТИВА — авто-удаление по дате ДД.ММ.ГГГГ
+# ТАЙМЕР ИНАКТИВА — авто-удаление по дате ДД.ММ.ГГГГ (МСК)
 # ─────────────────────────────────────────────
 
 @tasks.loop(hours=1)
 async def inactive_expire_loop():
-    """Каждый час проверяет список инактива и удаляет тех, чья дата возвращения наступила."""
+    """Каждый час проверяет список инактива и удаляет тех, чья дата возвращения наступила (МСК)."""
     import re as _re
     from datetime import date as _date
-    today = datetime.now().date()
+    today = now_msk().date()
     for guild_id, users in list(inactive_list.items()):
         expired = []
-        for uid, entry in users.items():
-            m = _re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", entry.get("return_date", "").strip())
-            if not m:
-                continue
+        for uid, entry in list(users.items()):
             try:
+                m = _re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", entry.get("return_date", "").strip())
+                if not m:
+                    continue
                 rd = _date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-            except ValueError:
-                continue
-            if today >= rd:
-                expired.append(uid)
+                if today >= rd:
+                    expired.append(uid)
+            except Exception as e:
+                print(f"WARNING: inactive_expire_loop bad entry guild={guild_id} user={uid}: {e}")
         if not expired:
             continue
         for uid in expired:
@@ -8062,6 +8072,13 @@ async def inactive_expire_loop():
         guild = bot.get_guild(guild_id)
         if guild:
             await refresh_inactive_message(guild)
+
+
+@inactive_expire_loop.error
+async def inactive_expire_loop_error(error: Exception):
+    print(f"WARNING: inactive_expire_loop crashed, restarting: {error}")
+    if not inactive_expire_loop.is_running():
+        inactive_expire_loop.restart()
 
 
 # ─────────────────────────────────────────────

@@ -168,6 +168,12 @@ vzp_roles2: dict = {}
 # 🏎 РОЛЬ МП-2 { guild_id: role_id }
 mp_roles2: dict = {}
 
+# ⛏ РОЛЬ ВЗХ { guild_id: role_id }
+vzh_roles: dict = {}
+
+# ⛏ РОЛЬ ВЗХ-2 { guild_id: role_id }
+vzh_roles2: dict = {}
+
 # 📣 РОЛЬ ДЛЯ ТЕГА В РЕАКИ-2 { guild_id: role_id }
 list_roles2: dict = {}
 
@@ -730,6 +736,8 @@ def save_data():
             "warn_log_messages":    {str(g): {str(u): v for u, v in us.items()} for g, us in warn_log_messages.items()},
             "recruit_cabinet_panels": {str(g): v for g, v in recruit_cabinet_panels.items()},
             "backup_settings":       {str(g): v for g, v in backup_settings.items()},
+            "vzh_roles":             {str(g): v for g, v in vzh_roles.items()},
+            "vzh_roles2":            {str(g): v for g, v in vzh_roles2.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -870,6 +878,10 @@ def load_data():
             recruit_cabinet_panels[int(g)] = v
         for g, v in data.get("backup_settings", {}).items():
             backup_settings[int(g)] = v
+        for g, v in data.get("vzh_roles", {}).items():
+            vzh_roles[int(g)] = v
+        for g, v in data.get("vzh_roles2", {}).items():
+            vzh_roles2[int(g)] = v
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -2223,6 +2235,7 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
         "slots": slots, "reserve": [], "image_url": image_ref, "note": None,
         "channel_id": channel.id, "thread_id": None, "thread_msg_id": None,
         "event_time": event_time, "closed": False, "cmd": cmd,
+        "created_at": now_msk().isoformat(), "reminded": False,
     }
 
     view = JoinEventView(msg.id) if join_mode else EventView(msg.id)
@@ -2334,6 +2347,101 @@ async def мп_cmd(ctx, количество: int = 10, *, название: str
     await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, event_time=event_time, cmd="mp")
 
 
+@bot.command(name="vzh")
+async def взх_cmd(ctx, *, args: str = ""):
+    """!vzh <ЧЧ:ММ> [количество] [название] — сбор ВЗХ; за 30 минут до времени всем занявшим слот придёт напоминание в ЛС"""
+    if not can_run_event(ctx, "vzh"):
+        return await ctx.message.delete()
+
+    event_time = None
+    количество = 10
+    название = "ВЗХ"
+    m = re.match(r'^(\d{1,2}:\d{2})(?:\s+(\d+))?(?:\s+(.*))?$', args.strip())
+    if m:
+        event_time = m.group(1)
+        if m.group(2):
+            количество = int(m.group(2))
+        if m.group(3) and m.group(3).strip():
+            название = m.group(3).strip()
+
+    if not event_time:
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
+        return await ctx.send(
+            "⚠️ Укажи время сбора первым: `!vzh 18:30 [количество] [название]`",
+            delete_after=8,
+        )
+
+    image_file = None
+    image_ref  = None
+    if ctx.message.attachments:
+        att = ctx.message.attachments[0]
+        try:
+            img_bytes  = await att.read()
+            ext        = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
+            safe_name  = f"event_image.{ext}"
+            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
+            image_ref  = f"attachment://{safe_name}"
+        except Exception:
+            pass
+
+    try:
+        await ctx.message.delete()
+    except Exception:
+        pass
+
+    mentions = []
+    vzh_role_id = vzh_roles.get(ctx.guild.id)
+    if vzh_role_id:
+        r = ctx.guild.get_role(vzh_role_id)
+        if r:
+            mentions.append(r.mention)
+    vzh2_role_id = vzh_roles2.get(ctx.guild.id)
+    if vzh2_role_id:
+        r = ctx.guild.get_role(vzh2_role_id)
+        if r:
+            mentions.append(r.mention)
+    content = " ".join(mentions) if mentions else None
+
+    await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, force_join_mode=True, event_time=event_time, cmd="vzh")
+
+
+@bot.command(name="роль_взх")
+async def set_vzh_role(ctx, роль: discord.Role):
+    """!роль_взх @роль — настроить роль ВЗХ для тега в !vzh"""
+    if not is_admin_ctx(ctx):
+        return await ctx.message.delete()
+    vzh_roles[ctx.guild.id] = роль.id
+    save_data()
+    embed = discord.Embed(
+        title="✅ Роль ВЗХ настроена",
+        description=f"В `!vzh` будет тегаться {роль.mention}",
+        color=discord.Color.green(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
+    await ctx.send(embed=embed, delete_after=10)
+    await ctx.message.delete()
+
+
+@bot.command(name="роль_взх2")
+async def set_vzh_role2(ctx, роль: discord.Role):
+    """!роль_взх2 @роль — вторая роль для тега в !vzh"""
+    if not is_admin_ctx(ctx):
+        return await ctx.message.delete()
+    vzh_roles2[ctx.guild.id] = роль.id
+    save_data()
+    embed = discord.Embed(
+        title="✅ Роль ВЗХ-2 настроена",
+        description=f"В `!vzh` дополнительно будет тегаться {роль.mention}",
+        color=discord.Color.green(),
+    )
+    embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
+    await ctx.send(embed=embed, delete_after=10)
+    await ctx.message.delete()
+
+
 @bot.command(name="роль_взп")
 async def set_vzp_role(ctx, роль: discord.Role):
     """!роль_взп @роль — настроить роль ВЗП для тега в !vzp"""
@@ -2421,7 +2529,7 @@ async def set_list_role2(ctx, роль: discord.Role):
 
 @tree.command(name="доступ_сбора", description="Добавить роль с доступом к команде сбора")
 @app_commands.describe(
-    тип="Тип сбора: vzp, mp или list",
+    тип="Тип сбора: vzp, mp, list или vzh",
     роль="Роль, которая получит доступ к команде"
 )
 @app_commands.choices(тип=[
@@ -2429,6 +2537,7 @@ async def set_list_role2(ctx, роль: discord.Role):
     app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
     app_commands.Choice(name="reaki", value="reaki"),
+    app_commands.Choice(name="vzh", value="vzh"),
 ])
 async def slash_event_access_add(interaction: discord.Interaction, тип: str, роль: discord.Role):
     if not is_admin(interaction):
@@ -2450,7 +2559,7 @@ async def slash_event_access_add(interaction: discord.Interaction, тип: str, 
 
 @tree.command(name="убрать_доступ_сбора", description="Убрать роль из доступа к команде сбора")
 @app_commands.describe(
-    тип="Тип сбора: vzp, mp или list",
+    тип="Тип сбора: vzp, mp, list или vzh",
     роль="Роль, которую убрать"
 )
 @app_commands.choices(тип=[
@@ -2458,6 +2567,7 @@ async def slash_event_access_add(interaction: discord.Interaction, тип: str, 
     app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
     app_commands.Choice(name="reaki", value="reaki"),
+    app_commands.Choice(name="vzh", value="vzh"),
 ])
 async def slash_event_access_remove(interaction: discord.Interaction, тип: str, роль: discord.Role):
     if not is_admin(interaction):
@@ -3508,7 +3618,8 @@ async def slash_settings(interaction: discord.Interaction):
         value=(
             f"`!vzp`: {roles_list_str('vzp')}\n"
             f"`!mp`: {roles_list_str('mp')}\n"
-            f"`!list`: {roles_list_str('list')}"
+            f"`!list`: {roles_list_str('list')}\n"
+            f"`!vzh`: {roles_list_str('vzh')}"
         ),
         inline=False,
     )
@@ -3590,7 +3701,8 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
     e.add_field(name="🎯 Сборы", value=(
         f"ВЗП: {_ecr('vzp')}\n"
         f"МП: {_ecr('mp')}\n"
-        f"Реаки: {_ecr('list')}"
+        f"Реаки: {_ecr('list')}\n"
+        f"ВЗХ: {_ecr('vzh')}"
     ), inline=True)
     e.add_field(name="🔊 Войс / 🖼 Контент", value=(
         f"💎/мин: **{vs.get('amount', 10)}**\n"
@@ -3674,9 +3786,10 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
         e.description = (
             f"**!vzp:**\n{_ecr('vzp')}\n\n"
             f"**!mp:**\n{_ecr('mp')}\n\n"
-            f"**!list:**\n{_ecr('list')}"
+            f"**!list:**\n{_ecr('list')}\n\n"
+            f"**!vzh:**\n{_ecr('vzh')}"
         )
-    elif category in ("event_взп", "event_мп", "event_реаки"):
+    elif category in ("event_vzp", "event_mp", "event_list", "event_vzh"):
         etype = category.split("_", 1)[1]
         ecr = event_command_roles.get(gid, {})
         ids = ecr.get(etype, [])
@@ -4087,7 +4200,7 @@ class _CfgEventsView(ui.View):
         back.callback = _back
         self.add_item(back)
 
-        for label, etype in [("⚔️ ВЗП", "vzp"), ("🏎 МП", "mp"), ("🎯 Реаки", "list")]:
+        for label, etype in [("⚔️ ВЗП", "vzp"), ("🏎 МП", "mp"), ("🎯 Реаки", "list"), ("⛏ ВЗХ", "vzh")]:
             btn = _cfg_btn(label, style=discord.ButtonStyle.primary, row=1)
             async def _cb(inter, et=etype):
                 await inter.response.edit_message(
@@ -4834,6 +4947,8 @@ async def on_ready():
         afk_expire_loop.start()
     if not backup_scheduler_loop.is_running():
         backup_scheduler_loop.start()
+    if not vzh_reminder_loop.is_running():
+        vzh_reminder_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
     for gid in list(roster_settings.keys()):
         guild = bot.get_guild(gid)
@@ -8169,6 +8284,64 @@ async def backup_scheduler_loop():
                             await channel.send(f"⚠️ Автобэкап упал с ошибкой: {e}")
                         except Exception:
                             pass
+
+
+# ─────────────────────────────────────────────
+# НАПОМИНАНИЕ О ВЗХ — ЛС за 30 минут занявшим слот
+# ─────────────────────────────────────────────
+
+@tasks.loop(minutes=1)
+async def vzh_reminder_loop():
+    """Каждую минуту проверяет сборы !vzh и за 30 минут до времени шлёт ЛС-напоминание тем, кто занял слот."""
+    import re as _re
+    now_msk_dt = now_msk()
+    for msg_id, ev in list(event_lists.items()):
+        if ev.get("cmd") != "vzh" or ev.get("closed") or ev.get("reminded"):
+            continue
+        try:
+            m = _re.match(r"^(\d{1,2}):(\d{2})$", (ev.get("event_time") or "").strip())
+            if not m:
+                continue
+            hour, minute = int(m.group(1)), int(m.group(2))
+            created_at = ev.get("created_at")
+            anchor = datetime.fromisoformat(created_at) if created_at else now_msk_dt
+            try:
+                target = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            except ValueError:
+                continue
+            if target < anchor:
+                target += timedelta(days=1)
+            remind_at = target - timedelta(minutes=30)
+            if not (remind_at <= now_msk_dt < target):
+                continue
+
+            recipients = [uid for uid in ev.get("slots", {}).values() if uid]
+            for uid in recipients:
+                try:
+                    user = await bot.fetch_user(uid)
+                    embed = discord.Embed(
+                        title="⏰ Напоминание о сборе ВЗХ",
+                        description=(
+                            f"**{ev.get('title', 'ВЗХ')}**\n"
+                            f"Начало в `{ev.get('event_time')}` — через 30 минут!"
+                        ),
+                        color=discord.Color.orange(),
+                    )
+                    await user.send(embed=embed)
+                except Exception as e:
+                    print(f"WARNING: vzh_reminder_loop DM {uid}: {e}")
+
+            ev["reminded"] = True
+            save_data()
+        except Exception as e:
+            print(f"WARNING: vzh_reminder_loop event {msg_id}: {e}")
+
+
+@vzh_reminder_loop.error
+async def vzh_reminder_loop_error(error: Exception):
+    print(f"WARNING: vzh_reminder_loop crashed, restarting: {error}")
+    if not vzh_reminder_loop.is_running():
+        vzh_reminder_loop.start()
 
 
 threading.Thread(target=_run_health_server, daemon=True).start()

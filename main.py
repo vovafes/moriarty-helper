@@ -1451,7 +1451,7 @@ class RejectModal(ui.Modal, title="❌ Причина отклонения"):
                 color=discord.Color.red(),
                 timestamp=datetime.now(),
             )
-            dm_embed.add_field(name="📅 Дата", value=datetime.now().strftime("%d.%m.%Y %H:%M"))
+            dm_embed.add_field(name="📅 Дата", value=now_msk().strftime("%d.%m.%Y %H:%M") + " МСК")
             dm_embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
             await target.send(embed=dm_embed)
         except Exception:
@@ -1631,7 +1631,7 @@ class InactiveModal(ui.Modal, title="📅 Уход в инактив"):
         inactive_list[guild_id][user_id] = {
             "reason":      str(self.reason),
             "return_date": raw,
-            "since":       datetime.now(),
+            "since":       now_msk(),
         }
         save_data()
 
@@ -1787,7 +1787,7 @@ class ApplicationReviewView(ui.View):
         new_embed.color = discord.Color.green()
         new_embed.add_field(
             name="✅ Статус",
-            value=f"Одобрено — {interaction.user.mention} ({datetime.now().strftime('%d.%m.%Y %H:%M')})",
+            value=f"Одобрено — {interaction.user.mention} ({now_msk().strftime('%d.%m.%Y %H:%M')} МСК)",
             inline=False,
         )
         await interaction.message.edit(embed=new_embed, view=None)
@@ -1803,7 +1803,7 @@ class ApplicationReviewView(ui.View):
                 color=0x2B2D31,
                 timestamp=datetime.now(),
             )
-            dm_embed.add_field(name="📅 Дата принятия", value=datetime.now().strftime("%d.%m.%Y %H:%M"), inline=True)
+            dm_embed.add_field(name="📅 Дата принятия", value=now_msk().strftime("%d.%m.%Y %H:%M") + " МСК", inline=True)
             dm_embed.add_field(name="👮 Одобрил", value=interaction.user.mention, inline=True)
             dm_embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
             if _approve_gif(interaction.guild_id):
@@ -8149,7 +8149,26 @@ async def backup_scheduler_loop():
             continue
         guild = bot.get_guild(guild_id)
         if guild:
-            await send_backup_now(guild)
+            try:
+                ok = await send_backup_now(guild)
+                if not ok:
+                    print(f"WARNING: backup_scheduler_loop guild={guild_id}: send_backup_now returned False")
+                    channel = guild.get_channel(bs["channel_id"]) or bot.get_channel(bs["channel_id"])
+                    if channel:
+                        try:
+                            await channel.send("⚠️ Автобэкап не отправлен: проверь права бота в этом канале или список файлов.")
+                        except Exception:
+                            pass
+            except Exception as e:
+                print(f"WARNING: backup_scheduler_loop guild={guild_id}: {e}")
+                guild_after = bot.get_guild(guild_id)
+                if guild_after:
+                    channel = guild_after.get_channel(bs["channel_id"]) or bot.get_channel(bs["channel_id"])
+                    if channel:
+                        try:
+                            await channel.send(f"⚠️ Автобэкап упал с ошибкой: {e}")
+                        except Exception:
+                            pass
 
 
 threading.Thread(target=_run_health_server, daemon=True).start()

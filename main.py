@@ -8423,23 +8423,44 @@ async def vzh_reminder_loop_error(error: Exception):
 # ВОЙС-ПРИСУТСТВИЕ — бот сидит в голосовом канале, пока онлайн
 # ─────────────────────────────────────────────
 
+_voice_presence_locks: dict = {}  # { guild_id: asyncio.Lock }
+
+
 async def _voice_presence_ensure(guild: discord.Guild):
-    """Подключает бота к настроенному голосовому каналу, если он должен там быть."""
+    """Подключает бота к настроенному голосовому каналу, если он должен там быть.
+
+    reconnect=False специально: встроенный авто-реконнект discord.py при обрыве
+    хендшейка (код 4006 — "сессия недействительна") зацикливается на уже протухшей
+    сессии и ретраит бесконечно внутри самого connect(). Здесь один неудачный
+    коннект просто логируется, а свежую попытку (с новой сессией) делает
+    voice_presence_loop раз в 5 минут или следующий вызов из on_voice_state_update.
+    """
     vp = voice_presence_settings.get(guild.id)
     if not vp or not vp.get("enabled") or not vp.get("channel_id"):
         return
     channel = guild.get_channel(vp["channel_id"])
     if not channel or not isinstance(channel, discord.VoiceChannel):
         return
-    vc = guild.voice_client
-    try:
-        if vc and vc.is_connected():
-            if vc.channel.id != channel.id:
-                await vc.move_to(channel)
-        else:
-            await channel.connect(self_mute=True, self_deaf=True, reconnect=True)
-    except Exception as e:
-        print(f"WARNING: voice_presence_ensure guild={guild.id}: {e}")
+
+    lock = _voice_presence_locks.setdefault(guild.id, asyncio.Lock())
+    if lock.locked():
+        return
+    async with lock:
+        vc = guild.voice_client
+        try:
+            if vc and vc.is_connected():
+                if vc.channel.id != channel.id:
+                    await vc.move_to(channel)
+                return
+            if vc:
+                # Оставшийся "мёртвый" клиент от неудавшегося коннекта — сбросить перед новой попыткой
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:
+                    pass
+            await channel.connect(self_mute=True, self_deaf=True, reconnect=False, timeout=15)
+        except Exception as e:
+            print(f"WARNING: voice_presence_ensure guild={guild.id}: {e}")
 
 
 @tasks.loop(minutes=5)

@@ -174,6 +174,10 @@ vzh_roles: dict = {}
 # ⛏ РОЛЬ ВЗХ-2 { guild_id: role_id }
 vzh_roles2: dict = {}
 
+# 🎙 ВОЙС-ПРИСУТСТВИЕ — бот всегда сидит в голосовом канале, пока онлайн
+# { guild_id: {"channel_id": int|None, "enabled": bool} }
+voice_presence_settings: dict = {}
+
 # 📣 РОЛЬ ДЛЯ ТЕГА В РЕАКИ-2 { guild_id: role_id }
 list_roles2: dict = {}
 
@@ -738,6 +742,7 @@ def save_data():
             "backup_settings":       {str(g): v for g, v in backup_settings.items()},
             "vzh_roles":             {str(g): v for g, v in vzh_roles.items()},
             "vzh_roles2":            {str(g): v for g, v in vzh_roles2.items()},
+            "voice_presence_settings": {str(g): v for g, v in voice_presence_settings.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
@@ -882,6 +887,8 @@ def load_data():
             vzh_roles[int(g)] = v
         for g, v in data.get("vzh_roles2", {}).items():
             vzh_roles2[int(g)] = v
+        for g, v in data.get("voice_presence_settings", {}).items():
+            voice_presence_settings[int(g)] = v
 
         print("OK: Data loaded from data.json")
     except Exception as e:
@@ -3716,6 +3723,11 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
         f"Период: **{bs.get('interval_hours', 1)}** ч.\n"
         f"Файлов выбрано: {len(bs.get('files', []))}"
     ), inline=True)
+    vp = voice_presence_settings.get(gid, {})
+    e.add_field(name="🎙 Войс-присутствие", value=(
+        f"Канал: {_cs(guild, vp.get('channel_id'))}\n"
+        f"Статус: {'🟢 Вкл' if vp.get('enabled') else '🔴 Выкл'}"
+    ), inline=True)
     e.set_footer(text="MORIARTY • Настройки сервера", icon_url=_footer(guild.id))
     return e
 
@@ -3842,6 +3854,15 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
             f"**Файлы для отправки:**\n"
             + ("\n".join(f"✅ {fn}" for fn in files) if files else "*ничего не выбрано*")
         )
+    elif category == "voice_presence":
+        vp = voice_presence_settings.get(gid, {})
+        e.title = "🎙 Войс-присутствие"
+        e.description = (
+            f"**Канал:** {_cs(guild, vp.get('channel_id'))}\n"
+            f"**Статус:** {'🟢 Включено' if vp.get('enabled') else '🔴 Выключено'}\n\n"
+            "Пока бот онлайн, он будет сидеть в этом голосовом канале и "
+            "автоматически переподключаться, если его выкинет."
+        )
     return e
 
 
@@ -3858,6 +3879,7 @@ class CfgCategorySelect(ui.Select):
             discord.SelectOption(label="🔊 Голосовые",      value="voice",   description="Баллы, категории, исключения"),
             discord.SelectOption(label="🖼 Контент",        value="content", description="Тексты, фото, ссылки панелей"),
             discord.SelectOption(label="💾 Бэкапы",         value="backup",  description="Канал, файлы и период автобэкапа"),
+            discord.SelectOption(label="🎙 Войс-присутствие", value="voice_presence", description="Бот всегда сидит в голосовом канале"),
         ]
         super().__init__(placeholder="Выбери категорию настроек…", options=options, row=0)
 
@@ -4427,6 +4449,50 @@ class _CfgBackupView(ui.View):
         self.add_item(_CfgBackupIntervalSelect(gid))
 
 
+class _CfgVoicePresenceView(ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        gid = guild.id
+        vp = voice_presence_settings.setdefault(gid, {"channel_id": None, "enabled": False})
+
+        back = _cfg_btn("◀ Назад", row=0)
+        async def _back(inter): await inter.response.edit_message(embed=build_cfg_main_embed(inter.guild), view=CfgMainView())
+        back.callback = _back
+        self.add_item(back)
+
+        toggle_label = "🔴 Выключить" if vp.get("enabled") else "🟢 Включить"
+        toggle_style = discord.ButtonStyle.danger if vp.get("enabled") else discord.ButtonStyle.success
+        btn_toggle = _cfg_btn(toggle_label, style=toggle_style, row=0)
+        async def _toggle(inter):
+            v = voice_presence_settings.setdefault(inter.guild_id, {"channel_id": None, "enabled": False})
+            if not v.get("enabled") and not v.get("channel_id"):
+                return await inter.response.send_message("❌ Сначала выбери голосовой канал.", ephemeral=True)
+            v["enabled"] = not v.get("enabled")
+            save_data()
+            if v["enabled"]:
+                await inter.response.defer(ephemeral=True)
+                await _voice_presence_ensure(inter.guild)
+                await inter.followup.send("✅ Войс-присутствие включено.", ephemeral=True)
+            else:
+                vc = inter.guild.voice_client
+                if vc and vc.is_connected():
+                    try:
+                        await vc.disconnect(force=True)
+                    except Exception:
+                        pass
+                await inter.response.send_message("✅ Войс-присутствие выключено.", ephemeral=True)
+            embed = build_cfg_category_embed(inter.guild, "voice_presence")
+            await inter.message.edit(embed=embed, view=_CfgVoicePresenceView(inter.guild))
+        btn_toggle.callback = _toggle
+        self.add_item(btn_toggle)
+
+        self.add_item(_CfgChannelPicker(
+            lambda gid_, cid: voice_presence_settings.setdefault(gid_, {"channel_id": None, "enabled": False}).__setitem__("channel_id", cid),
+            "voice_presence", 1, "🎙 Голосовой канал для присутствия",
+            channel_types=[discord.ChannelType.voice],
+        ))
+
+
 # ── Фабрика view по ключу категории ──────────────────────────────────────────
 
 def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:
@@ -4443,6 +4509,7 @@ def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:
     if cat == "voice":          return _CfgVoiceView(guild)
     if cat == "content":        return _CfgContentView(guild)
     if cat == "backup":         return _CfgBackupView(guild)
+    if cat == "voice_presence": return _CfgVoicePresenceView(guild)
     return CfgMainView()
 
 
@@ -4767,6 +4834,12 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
                 voice_join_times[gid] = {}
             voice_join_times[gid][uid] = now
 
+    # ── Войс-присутствие: переподключиться, если бота выкинуло ──
+    if member.id == bot.user.id and after.channel is None:
+        vp = voice_presence_settings.get(member.guild.id)
+        if vp and vp.get("enabled") and vp.get("channel_id"):
+            asyncio.create_task(_voice_presence_ensure(member.guild))
+
     # ── Приватные комнаты ──
     settings = private_vc_settings.get(member.guild.id)
     if not settings:
@@ -4949,6 +5022,8 @@ async def on_ready():
         backup_scheduler_loop.start()
     if not vzh_reminder_loop.is_running():
         vzh_reminder_loop.start()
+    if not voice_presence_loop.is_running():
+        voice_presence_loop.start()
     # Пересоздаём панели состава чтобы кнопки снова работали после рестарта
     for gid in list(roster_settings.keys()):
         guild = bot.get_guild(gid)
@@ -8342,6 +8417,50 @@ async def vzh_reminder_loop_error(error: Exception):
     print(f"WARNING: vzh_reminder_loop crashed, restarting: {error}")
     if not vzh_reminder_loop.is_running():
         vzh_reminder_loop.start()
+
+
+# ─────────────────────────────────────────────
+# ВОЙС-ПРИСУТСТВИЕ — бот сидит в голосовом канале, пока онлайн
+# ─────────────────────────────────────────────
+
+async def _voice_presence_ensure(guild: discord.Guild):
+    """Подключает бота к настроенному голосовому каналу, если он должен там быть."""
+    vp = voice_presence_settings.get(guild.id)
+    if not vp or not vp.get("enabled") or not vp.get("channel_id"):
+        return
+    channel = guild.get_channel(vp["channel_id"])
+    if not channel or not isinstance(channel, discord.VoiceChannel):
+        return
+    vc = guild.voice_client
+    try:
+        if vc and vc.is_connected():
+            if vc.channel.id != channel.id:
+                await vc.move_to(channel)
+        else:
+            await channel.connect(self_mute=True, self_deaf=True, reconnect=True)
+    except Exception as e:
+        print(f"WARNING: voice_presence_ensure guild={guild.id}: {e}")
+
+
+@tasks.loop(minutes=5)
+async def voice_presence_loop():
+    """Раз в 5 минут проверяет, что бот сидит в настроенном войс-канале, и переподключает при необходимости."""
+    for guild_id, vp in list(voice_presence_settings.items()):
+        if not vp.get("enabled") or not vp.get("channel_id"):
+            continue
+        guild = bot.get_guild(guild_id)
+        if guild:
+            try:
+                await _voice_presence_ensure(guild)
+            except Exception as e:
+                print(f"WARNING: voice_presence_loop guild={guild_id}: {e}")
+
+
+@voice_presence_loop.error
+async def voice_presence_loop_error(error: Exception):
+    print(f"WARNING: voice_presence_loop crashed, restarting: {error}")
+    if not voice_presence_loop.is_running():
+        voice_presence_loop.start()
 
 
 threading.Thread(target=_run_health_server, daemon=True).start()

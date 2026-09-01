@@ -4469,10 +4469,12 @@ class _CfgVoicePresenceView(ui.View):
                 return await inter.response.send_message("❌ Сначала выбери голосовой канал.", ephemeral=True)
             v["enabled"] = not v.get("enabled")
             save_data()
+
+            embed = build_cfg_category_embed(inter.guild, "voice_presence")
+            await inter.response.edit_message(embed=embed, view=_CfgVoicePresenceView(inter.guild))
+
             if v["enabled"]:
-                await inter.response.defer(ephemeral=True)
                 await _voice_presence_ensure(inter.guild)
-                await inter.followup.send("✅ Войс-присутствие включено.", ephemeral=True)
             else:
                 vc = inter.guild.voice_client
                 if vc and vc.is_connected():
@@ -4480,9 +4482,6 @@ class _CfgVoicePresenceView(ui.View):
                         await vc.disconnect(force=True)
                     except Exception:
                         pass
-                await inter.response.send_message("✅ Войс-присутствие выключено.", ephemeral=True)
-            embed = build_cfg_category_embed(inter.guild, "voice_presence")
-            await inter.message.edit(embed=embed, view=_CfgVoicePresenceView(inter.guild))
         btn_toggle.callback = _toggle
         self.add_item(btn_toggle)
 

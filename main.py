@@ -364,6 +364,13 @@ try:
 except Exception as _laws_err:
     print(f"[laws_module] не подключён: {_laws_err}")
 
+# Расписание PvP-событий фракций (модуль pvp_module.py)
+import pvp_module
+try:
+    pvp_module.setup_pvp(bot)
+except Exception as _pvp_err:
+    print(f"[pvp_module] не подключён: {_pvp_err}")
+
 
 # ─────────────────────────────────────────────
 # HELPERS
@@ -3728,6 +3735,13 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
         f"Канал: {_cs(guild, vp.get('channel_id'))}\n"
         f"Статус: {'🟢 Вкл' if vp.get('enabled') else '🔴 Выкл'}"
     ), inline=True)
+    pvp_cfg = pvp_module.load_config()
+    pvg = pvp_module.guild_config(pvp_cfg, gid)
+    pvp_on = sum(1 for v in pvg["events"].values() if v)
+    e.add_field(name="⚔️ PvP-события", value=(
+        f"Канал: {_cs(guild, pvg.get('channel_id'))}\n"
+        f"Включено: **{pvp_on}/{len(pvp_module.EVENTS)}**"
+    ), inline=True)
     e.set_footer(text="MORIARTY • Настройки сервера", icon_url=_footer(guild.id))
     return e
 
@@ -3863,6 +3877,14 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
             "Пока бот онлайн, он будет сидеть в этом голосовом канале и "
             "автоматически переподключаться, если его выкинет."
         )
+    elif category == "pvp":
+        pvg = pvp_module.guild_config(pvp_module.load_config(), gid)
+        e.title = "⚔️ PvP-события"
+        lines = [f"**Канал публикаций:** {_cs(guild, pvg.get('channel_id'))}", ""]
+        for key, meta in pvp_module.EVENTS.items():
+            status = "🟢 вкл" if pvg["events"].get(key, True) else "🔴 выкл"
+            lines.append(f"{meta['label']} · {status} — {', '.join(meta['times'])} МСК")
+        e.description = "\n".join(lines)
     return e
 
 
@@ -3880,6 +3902,7 @@ class CfgCategorySelect(ui.Select):
             discord.SelectOption(label="🖼 Контент",        value="content", description="Тексты, фото, ссылки панелей"),
             discord.SelectOption(label="💾 Бэкапы",         value="backup",  description="Канал, файлы и период автобэкапа"),
             discord.SelectOption(label="🎙 Войс-присутствие", value="voice_presence", description="Бот всегда сидит в голосовом канале"),
+            discord.SelectOption(label="⚔️ PvP-события",    value="pvp",     description="AirDrop, чёрный рынок, война за граффити"),
         ]
         super().__init__(placeholder="Выбери категорию настроек…", options=options, row=0)
 
@@ -4492,6 +4515,58 @@ class _CfgVoicePresenceView(ui.View):
         ))
 
 
+class _CfgPvpChannelPicker(ui.ChannelSelect):
+    def __init__(self, row: int):
+        super().__init__(placeholder="⚔️ Канал для публикации PvP-событий",
+                          channel_types=[discord.ChannelType.text], row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        ch = self.values[0]
+        cfg = pvp_module.load_config()
+        g = pvp_module.guild_config(cfg, interaction.guild_id)
+        g["channel_id"] = ch.id
+        pvp_module.save_config(cfg)
+        await interaction.response.send_message(f"✅ Сохранено: {ch.mention}", ephemeral=True)
+        embed = build_cfg_category_embed(interaction.guild, "pvp")
+        await interaction.message.edit(embed=embed)
+
+
+class _CfgPvpView(ui.View):
+    def __init__(self, guild: discord.Guild):
+        super().__init__(timeout=300)
+        gid = guild.id
+        cfg = pvp_module.load_config()
+        pvg = pvp_module.guild_config(cfg, gid)
+
+        back = _cfg_btn("◀ Назад", row=0)
+        async def _back(inter): await inter.response.edit_message(embed=build_cfg_main_embed(inter.guild), view=CfgMainView())
+        back.callback = _back
+        self.add_item(back)
+
+        for i, (key, meta) in enumerate(pvp_module.EVENTS.items(), start=1):
+            enabled = pvg["events"].get(key, True)
+            btn = _cfg_btn(
+                f"{meta['label']}: {'🟢 вкл' if enabled else '🔴 выкл'}",
+                style=discord.ButtonStyle.danger if enabled else discord.ButtonStyle.success,
+                row=1,
+            )
+
+            def _make_toggle(event_key: str):
+                async def _toggle(inter: discord.Interaction):
+                    c = pvp_module.load_config()
+                    g = pvp_module.guild_config(c, inter.guild_id)
+                    g["events"][event_key] = not g["events"].get(event_key, True)
+                    pvp_module.save_config(c)
+                    embed = build_cfg_category_embed(inter.guild, "pvp")
+                    await inter.response.edit_message(embed=embed, view=_CfgPvpView(inter.guild))
+                return _toggle
+
+            btn.callback = _make_toggle(key)
+            self.add_item(btn)
+
+        self.add_item(_CfgPvpChannelPicker(row=2))
+
+
 # ── Фабрика view по ключу категории ──────────────────────────────────────────
 
 def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:
@@ -4509,6 +4584,7 @@ def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:
     if cat == "content":        return _CfgContentView(guild)
     if cat == "backup":         return _CfgBackupView(guild)
     if cat == "voice_presence": return _CfgVoicePresenceView(guild)
+    if cat == "pvp":            return _CfgPvpView(guild)
     return CfgMainView()
 
 
@@ -5011,8 +5087,6 @@ async def on_ready():
         update_stats.start()
     if not voice_reward_loop.is_running():
         voice_reward_loop.start()
-    if not game_activity_check_loop.is_running():
-        game_activity_check_loop.start()
     if not inactive_expire_loop.is_running():
         inactive_expire_loop.start()
     if not afk_expire_loop.is_running():
@@ -6123,82 +6197,6 @@ async def voice_reward_loop():
         save_data()
 
 
-# Счётчик тиков для проверки "в игре, не в войсе"
-_game_check_ticks: dict = {}
-
-
-@tasks.loop(minutes=1)
-async def game_activity_check_loop():
-    global _game_check_ticks
-    for guild in bot.guilds:
-        s = voice_reward_settings.get(guild.id)
-        if not s:
-            continue
-        log_ch_id = s.get("game_log_channel")
-        if not log_ch_id:
-            continue
-        interval = s.get("game_check_interval", 10)
-        game_name = s.get("game_name", "GTA5RP")
-
-        tick = _game_check_ticks.get(guild.id, 0) + 1
-        _game_check_ticks[guild.id] = tick
-        if tick < interval:
-            continue
-        _game_check_ticks[guild.id] = 0
-
-        categories = s.get("categories", [])
-        excluded   = set(s.get("excluded_channels", []))
-
-        # Собираем участников, которые сейчас в отслеживаемых войс-каналах
-        in_voice_ids: set = set()
-        for cat_id in categories:
-            category = guild.get_channel(cat_id)
-            if not category or not isinstance(category, discord.CategoryChannel):
-                continue
-            for vc in category.voice_channels:
-                if vc.id in excluded:
-                    continue
-                for m in vc.members:
-                    if not m.bot:
-                        in_voice_ids.add(m.id)
-
-        # Фильтр по ролям фамы (если задан)
-        watch_role_ids = set(s.get("game_watch_roles", []))
-
-        def _passes_filter(m: discord.Member) -> bool:
-            if not watch_role_ids:
-                return True
-            return any(r.id in watch_role_ids for r in m.roles)
-
-        # Ищем участников в игре, но не в войсе
-        in_game_not_voice = [
-            m for m in guild.members
-            if not m.bot and m.id not in in_voice_ids
-            and _member_playing_game(m, game_name)
-            and _passes_filter(m)
-        ]
-        if not in_game_not_voice:
-            continue
-
-        log_channel = guild.get_channel(log_ch_id)
-        if not log_channel:
-            continue
-
-        count = len(in_game_not_voice)
-        lines = "\n".join(f"• {m.mention}" for m in in_game_not_voice)
-        embed = discord.Embed(
-            title=f"🎮 Не в войсе — {count} чел.",
-            description=lines,
-            color=discord.Color.orange(),
-            timestamp=datetime.now(),
-        )
-        embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
-        try:
-            await log_channel.send(embed=embed)
-        except Exception:
-            pass
-
-
 def _get_voice_settings(guild_id: int) -> dict:
     if guild_id not in voice_reward_settings:
         voice_reward_settings[guild_id] = {
@@ -6207,16 +6205,10 @@ def _get_voice_settings(guild_id: int) -> dict:
             "amount": 10,
             "amount_game": 15,
             "game_name": "RAGE Multiplayer",
-            "game_log_channel": None,
-            "game_check_interval": 10,
-            "game_watch_roles": [],
         }
     s = voice_reward_settings[guild_id]
     s.setdefault("amount_game", s.get("amount", 10) + 5)
     s.setdefault("game_name", "GTA5RP")
-    s.setdefault("game_log_channel", None)
-    s.setdefault("game_check_interval", 10)
-    s.setdefault("game_watch_roles", [])
     return s
 
 
@@ -6362,8 +6354,6 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
     s = _get_voice_settings(guild.id)
     cats = s.get("categories", [])
     excl = s.get("excluded_channels", [])
-    log_ch_id = s.get("game_log_channel")
-    watch_role_ids = s.get("game_watch_roles", [])
 
     cats_text = (
         "\n".join(
@@ -6372,8 +6362,6 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
         ) or "—"
     )
     excl_text  = "\n".join(f"• <#{c}>" for c in excl) or "—"
-    log_text   = f"<#{log_ch_id}>" if log_ch_id else "не задан"
-    roles_text = "\n".join(f"• <@&{r}>" for r in watch_role_ids) or "все участники"
 
     embed = discord.Embed(
         title="🎙 Настройки активности",
@@ -6383,9 +6371,6 @@ def _build_activity_embed(guild: discord.Guild) -> discord.Embed:
     embed.add_field(name="💎 Войс без игры", value=f"**{s.get('amount', 10)}** /мин", inline=True)
     embed.add_field(name="💎 Войс + игра", value=f"**{s.get('amount_game', 15)}** /мин", inline=True)
     embed.add_field(name="🕹 Название игры", value=s.get("game_name", "RAGE Multiplayer"), inline=True)
-    embed.add_field(name="🔔 Лог «в игре, не в войсе»", value=log_text, inline=True)
-    embed.add_field(name="⏱ Интервал проверки", value=f"**{s.get('game_check_interval', 10)}** мин", inline=True)
-    embed.add_field(name="👥 Фильтр по ролям", value=roles_text, inline=True)
     embed.add_field(name="📂 Категории войса", value=cats_text, inline=False)
     embed.add_field(name="🚫 Исключённые каналы", value=excl_text, inline=False)
     embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
@@ -6411,12 +6396,6 @@ class ActivityRatesModal(ui.Modal, title="💎 Настройки активно
         required=True,
         max_length=64,
     )
-    game_check_interval = ui.TextInput(
-        label="Интервал проверки «в игре, не в войсе» (мин)",
-        placeholder="10",
-        required=True,
-        max_length=4,
-    )
 
     def __init__(self, orig_msg: discord.Message):
         super().__init__()
@@ -6433,28 +6412,6 @@ class ActivityRatesModal(ui.Modal, title="💎 Настройки активно
         except ValueError:
             pass
         s["game_name"] = str(self.game_name).strip() or "GTA5RP"
-        try:
-            s["game_check_interval"] = max(1, int(str(self.game_check_interval).strip()))
-        except ValueError:
-            pass
-        save_data()
-        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
-
-
-class ActivityLogChannelSelect(ui.ChannelSelect):
-    def __init__(self, orig_msg: discord.Message):
-        super().__init__(
-            placeholder="📢 Выбрать лог-канал «в игре, не в войсе»",
-            channel_types=[discord.ChannelType.text],
-            min_values=1,
-            max_values=1,
-            row=1,
-        )
-        self._orig = orig_msg
-
-    async def callback(self, interaction: discord.Interaction):
-        s = _get_voice_settings(interaction.guild_id)
-        s["game_log_channel"] = self.values[0].id
         save_data()
         await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
 
@@ -6501,55 +6458,20 @@ class ActivityCategoryRemoveSelect(ui.Select):
         await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
 
 
-class ActivityWatchRoleSelect(ui.RoleSelect):
-    def __init__(self):
-        super().__init__(
-            placeholder="👥 Добавить роль фильтра фамы",
-            min_values=1,
-            max_values=5,
-            row=4,
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        s = _get_voice_settings(interaction.guild_id)
-        for role in self.values:
-            if role.id not in s["game_watch_roles"]:
-                s["game_watch_roles"].append(role.id)
-        save_data()
-        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
-
-
 class ActivityView(ui.View):
     def __init__(self, guild: discord.Guild):
         super().__init__(timeout=300)
-        self.add_item(ActivityLogChannelSelect(None))
         self.add_item(ActivityCategoryAddSelect())
         self.add_item(ActivityCategoryRemoveSelect(guild))
-        self.add_item(ActivityWatchRoleSelect())
 
     @ui.button(label="✏️ Ставки и игра", style=discord.ButtonStyle.primary, row=0)
     async def btn_rates(self, interaction: discord.Interaction, button: ui.Button):
         s = _get_voice_settings(interaction.guild_id)
         modal = ActivityRatesModal(None)
-        modal.amount.default              = str(s.get("amount", 10))
-        modal.amount_game.default         = str(s.get("amount_game", 15))
-        modal.game_name.default           = s.get("game_name", "RAGE Multiplayer")
-        modal.game_check_interval.default = str(s.get("game_check_interval", 10))
+        modal.amount.default      = str(s.get("amount", 10))
+        modal.amount_game.default = str(s.get("amount_game", 15))
+        modal.game_name.default   = s.get("game_name", "RAGE Multiplayer")
         await interaction.response.send_modal(modal)
-
-    @ui.button(label="🔕 Убрать лог-канал", style=discord.ButtonStyle.danger, row=0)
-    async def btn_remove_log(self, interaction: discord.Interaction, button: ui.Button):
-        s = _get_voice_settings(interaction.guild_id)
-        s["game_log_channel"] = None
-        save_data()
-        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
-
-    @ui.button(label="🗑 Сбросить фильтр ролей", style=discord.ButtonStyle.danger, row=0)
-    async def btn_clear_roles(self, interaction: discord.Interaction, button: ui.Button):
-        s = _get_voice_settings(interaction.guild_id)
-        s["game_watch_roles"] = []
-        save_data()
-        await interaction.response.edit_message(embed=_build_activity_embed(interaction.guild), view=ActivityView(interaction.guild))
 
 
 @tree.command(name="активность", description="Настройки начисления алмазов за голосовую активность")

@@ -4,3 +4,10 @@ __pycache__/
 laws.sqlite
 laws_config.json
 laws_usage.json
+pvp_config.json
+venv/
+data.json
+chips.json
+obshak.json
+points.json
+roulette.json

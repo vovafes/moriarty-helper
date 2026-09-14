@@ -5973,6 +5973,53 @@ async def _delete_warn_log_message(guild: discord.Guild, user_id: int):
         pass
 
 
+class RemoveWarnModal(ui.Modal, title="✅ Снять варн"):
+    user_id_input = ui.TextInput(label="ID пользователя", placeholder="123456789012345678", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        try:
+            target_id = int(str(self.user_id_input).strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ Некорректный ID пользователя.", ephemeral=True)
+
+        if not remove_warn(guild.id, target_id):
+            return await interaction.response.send_message("❌ У пользователя нет варнов.", ephemeral=True)
+
+        member = guild.get_member(target_id)
+        guild_warn_roles = warn_roles.get(guild.id, {})
+        roles_to_remove = [guild.get_role(rid) for rid in guild_warn_roles.values() if guild.get_role(rid)]
+        if member:
+            try:
+                await member.remove_roles(*[r for r in roles_to_remove if r], reason="Снятие варна")
+            except Exception:
+                pass
+
+        await _delete_warn_log_message(guild, target_id)
+
+        embed = discord.Embed(
+            title="✅ Warn снят",
+            description=f"У {member.mention if member else f'<@{target_id}>'} снят warn",
+            color=discord.Color.green(),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(name="Снял", value=interaction.user.mention, inline=False)
+        embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+        await interaction.response.send_message(embed=embed)
+
+        if member:
+            try:
+                dm_embed = discord.Embed(
+                    title="✅ С вас снят варн",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now(),
+                )
+                dm_embed.set_footer(text="MORIARTY", icon_url=_footer(guild.id))
+                await member.send(embed=dm_embed)
+            except Exception:
+                pass
+
+
 class IssueWarnModal(ui.Modal):
     user_id_input = ui.TextInput(label="ID пользователя", placeholder="123456789012345678", required=True)
     reason_input  = ui.TextInput(label="Причина", style=discord.TextStyle.paragraph, required=True)
@@ -6093,6 +6140,12 @@ class RecruitCabinetView(ui.View):
         if not is_recruiter(interaction):
             return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
         await interaction.response.send_modal(IssueWarnModal(payment_method="money"))
+
+    @ui.button(label="Снять варн", emoji="✅", style=discord.ButtonStyle.success, custom_id="recruit_cabinet_warn_remove", row=0)
+    async def btn_warn_remove(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_recruiter(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+        await interaction.response.send_modal(RemoveWarnModal())
 
 
 @tree.command(name="кабинет_рекрута", description="Создать панель кабинета рекрута в текущем канале")

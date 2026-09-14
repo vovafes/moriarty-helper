@@ -569,7 +569,8 @@ def get_warns(guild_id: int, user_id: int) -> dict:
     return warns_db.get(guild_id, {}).get(user_id, None)
 
 
-def set_warn(guild_id: int, user_id: int, count: int, reason: str, moderator_id: int):
+def set_warn(guild_id: int, user_id: int, count: int, reason: str, moderator_id: int, payment_method: str = "any"):
+    """payment_method: "any" (баллы или деньги) | "money" (только деньги)"""
     if guild_id not in warns_db:
         warns_db[guild_id] = {}
     warns_db[guild_id][user_id] = {
@@ -577,8 +578,13 @@ def set_warn(guild_id: int, user_id: int, count: int, reason: str, moderator_id:
         "reason": reason,
         "moderator": moderator_id,
         "timestamp": datetime.now(),
+        "payment_method": payment_method,
     }
     save_data()
+
+
+def warn_payment_label(warn_data: dict) -> str:
+    return "💵 только деньгами" if warn_data.get("payment_method") == "money" else "💎 баллами или деньгами"
 
 
 def remove_warn(guild_id: int, user_id: int) -> bool:
@@ -2137,9 +2143,9 @@ class ShopItemButton(ui.Button):
             warn_data = get_warns(guild_id, user_id)
             if not warn_data:
                 return await interaction.response.send_message("✅ У вас нет варнов для снятия!", ephemeral=True)
-            if warn_data["warns"] >= 3:
+            if warn_data.get("payment_method") == "money":
                 return await interaction.response.send_message(
-                    "❌ Варн 3/3 нельзя снять за баллы. Обратитесь к администрации.", ephemeral=True
+                    "❌ Этот варн можно снять только деньгами. Обратитесь к администрации.", ephemeral=True
                 )
 
             new_level = decrement_warn(guild_id, user_id)
@@ -5787,6 +5793,7 @@ class PersonalCabinetView(ui.View):
             )
             embed.add_field(name="Количество", value=f"{warn_data['warns']}/3", inline=True)
             embed.add_field(name="Причина", value=warn_data.get("reason", "—"), inline=True)
+            embed.add_field(name="Оплата", value=warn_payment_label(warn_data), inline=True)
         embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -5966,10 +5973,15 @@ async def _delete_warn_log_message(guild: discord.Guild, user_id: int):
         pass
 
 
-class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
+class IssueWarnModal(ui.Modal):
     user_id_input = ui.TextInput(label="ID пользователя", placeholder="123456789012345678", required=True)
     reason_input  = ui.TextInput(label="Причина", style=discord.TextStyle.paragraph, required=True)
     level_input   = ui.TextInput(label="Номер варна (1, 2 или 3)", placeholder="1", required=True, max_length=1)
+
+    def __init__(self, payment_method: str = "any"):
+        pay_word = "только деньги" if payment_method == "money" else "баллы/деньги"
+        super().__init__(title=f"⚠️ Выдать варн — {pay_word}")
+        self.payment_method = payment_method
 
     async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
@@ -5997,7 +6009,7 @@ class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
 
         await interaction.response.defer(ephemeral=True)
 
-        set_warn(guild.id, member.id, level, reason, interaction.user.id)
+        set_warn(guild.id, member.id, level, reason, interaction.user.id, self.payment_method)
 
         guild_warn_roles = warn_roles.get(guild.id, {})
         roles_to_remove = [guild.get_role(rid) for rid in guild_warn_roles.values() if guild.get_role(rid)]
@@ -6009,7 +6021,7 @@ class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
         except Exception:
             pass
 
-        removable = "баллами в магазине / деньгами" if level in (1, 2) else "только деньгами"
+        removable = warn_payment_label(get_warns(guild.id, member.id))
 
         log_embed = discord.Embed(
             title="⚠️ Выдан варн",
@@ -6040,7 +6052,7 @@ class IssueWarnModal(ui.Modal, title="⚠️ Выдать варн"):
         try:
             dm_embed = discord.Embed(
                 title="⚠️ Вы получили warn",
-                description=f"**Причина:** {reason}\n**Варны:** {level}/3",
+                description=f"**Причина:** {reason}\n**Варны:** {level}/3\n**Оплата:** {removable}",
                 color=discord.Color.red(),
                 timestamp=datetime.now(),
             )
@@ -6070,11 +6082,17 @@ class RecruitCabinetView(ui.View):
         embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @ui.button(label="Выдать варн", emoji="⚠️", style=discord.ButtonStyle.danger, custom_id="recruit_cabinet_warn", row=0)
-    async def btn_warn(self, interaction: discord.Interaction, button: ui.Button):
+    @ui.button(label="Варн (баллы/деньги)", emoji="💎", style=discord.ButtonStyle.danger, custom_id="recruit_cabinet_warn_any", row=0)
+    async def btn_warn_any(self, interaction: discord.Interaction, button: ui.Button):
         if not is_recruiter(interaction):
             return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
-        await interaction.response.send_modal(IssueWarnModal())
+        await interaction.response.send_modal(IssueWarnModal(payment_method="any"))
+
+    @ui.button(label="Варн (только деньги)", emoji="💵", style=discord.ButtonStyle.danger, custom_id="recruit_cabinet_warn_money", row=0)
+    async def btn_warn_money(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_recruiter(interaction):
+            return await interaction.response.send_message("❌ Недостаточно прав!", ephemeral=True)
+        await interaction.response.send_modal(IssueWarnModal(payment_method="money"))
 
 
 @tree.command(name="кабинет_рекрута", description="Создать панель кабинета рекрута в текущем канале")
@@ -7029,8 +7047,9 @@ def _build_warnlist_embed(guild: discord.Guild) -> discord.Embed:
         emoji    = WARN_EMOJI.get(count, "⚠️")
         ts       = d.get("timestamp")
         date_str = ts.strftime("%d.%m.%Y") if isinstance(ts, datetime) else str(ts)[:10]
+        pay_tag  = " 💵" if d.get("payment_method") == "money" else ""
         lines.append(
-            f"{emoji} <@{uid}> — **{count}/3**\n"
+            f"{emoji} <@{uid}> — **{count}/3**{pay_tag}\n"
             f"└ Причина: {d['reason']} | <@{d['moderator']}> | {date_str}"
         )
 
@@ -7059,7 +7078,8 @@ class WarnListView(ui.View):
             description=(
                 f"{WARN_EMOJI.get(count, '⚠️')} Варнов: **{count}/3**\n"
                 f"Причина: {data['reason']}\n"
-                f"Модератор: <@{data['moderator']}>"
+                f"Модератор: <@{data['moderator']}>\n"
+                f"Оплата: {warn_payment_label(data)}"
             ),
             color=discord.Color.orange(),
             timestamp=datetime.now(),

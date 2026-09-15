@@ -174,6 +174,11 @@ vzh_roles: dict = {}
 # ⛏ РОЛЬ ВЗХ-2 { guild_id: role_id }
 vzh_roles2: dict = {}
 
+# 📅 РАСПИСАНИЕ ВЗХ ПО ФРАКЦИЯМ { guild_id: "banda" | "mafia" }
+# Банды: Пн+Ср+Пт+Вс, Мафии: Вт+Чт+Сб+Вс — используется, чтобы !vzh 20:00
+# правильно определял дату сбора, даже если создаётся за несколько дней до самого ВЗХ.
+vzh_schedule_settings: dict = {}
+
 # 🎙 ВОЙС-ПРИСУТСТВИЕ — бот всегда сидит в голосовом канале, пока онлайн
 # { guild_id: {"channel_id": int|None, "enabled": bool} }
 voice_presence_settings: dict = {}
@@ -191,7 +196,7 @@ BACKUP_AVAILABLE_FILES = [
     "laws_config.json", "laws_usage.json", "laws.sqlite",
 ]
 
-# 🎯 РОЛИ ДОСТУПА К КОМАНДАМ СБОРОВ { guild_id: { "vzp": [role_id,...], "mp": [...], "list": [...] } }
+# 🎯 РОЛИ ДОСТУПА К КОМАНДАМ СБОРОВ { guild_id: { "vzp": [role_id,...], "vzh": [...], "list": [...] } }
 event_command_roles: dict = {}
 
 # 🔒 ПРИВАТНЫЕ КОМНАТЫ
@@ -321,7 +326,7 @@ def is_admin_ctx(ctx) -> bool:
     return ctx.author.guild_permissions.administrator
 
 def can_run_event(ctx, event_type: str) -> bool:
-    """Проверка доступа к командам сборов (!vzp, !mp, !list). Админ всегда может."""
+    """Проверка доступа к командам сборов (!vzp, !vzh, !list). Админ всегда может."""
     if is_admin_ctx(ctx):
         return True
     allowed = event_command_roles.get(ctx.guild.id, {}).get(event_type, [])
@@ -375,6 +380,43 @@ except Exception as _pvp_err:
 # ─────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────
+
+# Расписание ВЗХ по фракциям (datetime.weekday(): Пн=0 ... Вс=6)
+VZH_FACTION_WEEKDAYS = {
+    "banda": {0, 2, 4, 6},   # Пн, Ср, Пт, Вс
+    "mafia": {1, 3, 5, 6},   # Вт, Чт, Сб, Вс
+}
+VZH_FACTION_LABELS = {"banda": "🔫 Банды", "mafia": "🕴 Мафии"}
+VZH_WEEKDAY_NAMES  = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def get_vzh_faction(guild_id: int) -> str:
+    return vzh_schedule_settings.get(guild_id, "banda")
+
+
+def _vzh_schedule_str(faction: str) -> str:
+    days = sorted(VZH_FACTION_WEEKDAYS.get(faction, VZH_FACTION_WEEKDAYS["banda"]))
+    return "+".join(VZH_WEEKDAY_NAMES[d] for d in days)
+
+
+def next_vzh_datetime(anchor: datetime, hour: int, minute: int, faction: str) -> datetime:
+    """Ближайшая дата (начиная с anchor), попадающая в расписание ВЗХ для фракции,
+    на которую ещё не наступило указанное время. Не просто «завтра», а конкретный
+    день недели по хардкод-расписанию — так !vzh, созданный за пару дней до сбора,
+    не путает сегодня/завтра."""
+    allowed = VZH_FACTION_WEEKDAYS.get(faction, VZH_FACTION_WEEKDAYS["banda"])
+    for delta in range(8):
+        candidate_date = (anchor + timedelta(days=delta)).date()
+        if candidate_date.weekday() not in allowed:
+            continue
+        candidate = datetime.combine(candidate_date, anchor.time()).replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if candidate >= anchor:
+            return candidate
+    return anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
 def declension(n: int) -> str:
     mod10, mod100 = n % 10, n % 100
     if 11 <= mod100 <= 19:
@@ -481,6 +523,76 @@ async def update_thread_list(message_id: int):
             content=build_thread_list(data["title"], data["max"], data["slots"], data.get("reserve", [])),
             view=ThreadListView(message_id),
         )
+    except Exception:
+        pass
+
+
+def _find_event_by_thread(thread_id: int):
+    """Находит сбор по ID его треда с обсуждением."""
+    for mid, data in event_lists.items():
+        if data.get("thread_id") == thread_id:
+            return mid, data
+    return None, None
+
+
+async def _handle_thread_slot_pick(message: discord.Message):
+    """Альтернатива кнопкам: если написать номер слота в треде сбора — занимает/освобождает его."""
+    content = message.content.strip()
+    if not content.isdigit():
+        return
+
+    message_id, data = _find_event_by_thread(message.channel.id)
+    if not data:
+        return
+    if data.get("closed"):
+        return
+
+    slot_num  = int(content)
+    max_count = data.get("max", 0)
+    if not (1 <= slot_num <= max_count):
+        return
+
+    user_id = message.author.id
+    slots   = data["slots"]
+    reserve = data.setdefault("reserve", [])
+
+    if slots.get(slot_num) == user_id:
+        slots[slot_num] = None
+        reply = f"❌ {message.author.mention} покинул(а) слот **{slot_num}**"
+    elif slots.get(slot_num) is not None:
+        try:
+            await message.channel.send(f"❌ Слот **{slot_num}** уже занят!", delete_after=6)
+        except Exception:
+            pass
+        return
+    else:
+        for s, uid in list(slots.items()):
+            if uid == user_id:
+                slots[s] = None
+        if user_id in reserve:
+            reserve.remove(user_id)
+        slots[slot_num] = user_id
+        reply = f"✅ {message.author.mention} занял(а) слот **{slot_num}**!"
+
+    save_data()
+    join_mode = data.get("mode") == "join"
+    try:
+        channel  = bot.get_channel(data["channel_id"])
+        orig_msg = await channel.fetch_message(message_id)
+        embed = build_event_embed(
+            message.guild.id, data["title"], data["max"], slots,
+            data.get("image_url"), data.get("note"), join_mode=join_mode,
+            event_time=data.get("event_time"), closed=data.get("closed", False),
+            reserve=reserve,
+        )
+        view = JoinEventView(message_id) if join_mode else EventView(message_id)
+        await orig_msg.edit(embed=embed, view=view)
+    except Exception:
+        pass
+
+    await update_thread_list(message_id)
+    try:
+        await message.channel.send(reply, delete_after=6)
     except Exception:
         pass
 
@@ -755,6 +867,7 @@ def save_data():
             "backup_settings":       {str(g): v for g, v in backup_settings.items()},
             "vzh_roles":             {str(g): v for g, v in vzh_roles.items()},
             "vzh_roles2":            {str(g): v for g, v in vzh_roles2.items()},
+            "vzh_schedule_settings": {str(g): v for g, v in vzh_schedule_settings.items()},
             "voice_presence_settings": {str(g): v for g, v in voice_presence_settings.items()},
         }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -900,6 +1013,8 @@ def load_data():
             vzh_roles[int(g)] = v
         for g, v in data.get("vzh_roles2", {}).items():
             vzh_roles2[int(g)] = v
+        for g, v in data.get("vzh_schedule_settings", {}).items():
+            vzh_schedule_settings[int(g)] = v
         for g, v in data.get("voice_presence_settings", {}).items():
             voice_presence_settings[int(g)] = v
 
@@ -2229,7 +2344,7 @@ async def set_event_role(ctx, роль: discord.Role):
     await ctx.message.delete()
 
 
-async def _create_event_message(channel, guild, title: str, max_count: int, image_file=None, image_ref: str | None = None, content: str | None = None, force_join_mode: bool = False, event_time: str = None, cmd: str | None = None):
+async def _create_event_message(channel, guild, title: str, max_count: int, image_file=None, image_ref: str | None = None, content: str | None = None, force_join_mode: bool = False, event_time: str = None, cmd: str | None = None, event_datetime: str | None = None):
     """Создаёт сбор: эмбед + тред. <= 24 слотов → кнопки-цифры, > 24 → одна кнопка ✅."""
     if not (1 <= max_count <= 100):
         await channel.send("❌ Количество слотов: от 1 до 100!", delete_after=5)
@@ -2256,6 +2371,7 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
         "channel_id": channel.id, "thread_id": None, "thread_msg_id": None,
         "event_time": event_time, "closed": False, "cmd": cmd,
         "created_at": now_msk().isoformat(), "reminded": False,
+        "event_datetime": event_datetime,
     }
 
     view = JoinEventView(msg.id) if join_mode else EventView(msg.id)
@@ -2263,7 +2379,13 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
 
     # Тред с живым списком
     try:
-        hint = "Нажми ✅ для записи · 🪑 Резерв — запасной список" if join_mode else "Кнопка слота · 🪑 Резерв — запасной список"
+        hint = (
+            "Нажми ✅ для записи · 🪑 Резерв — запасной список\n"
+            "Или напиши номер слота (например `23`) прямо в этом треде, чтобы занять его."
+            if join_mode else
+            "Кнопка слота · 🪑 Резерв — запасной список\n"
+            "Или напиши номер слота (например `23`) прямо в этом треде, чтобы занять его."
+        )
         thread = await msg.create_thread(name=f"💬 {title}", auto_archive_duration=1440)
         thread_embed = discord.Embed(
             description=f"📋 Обсуждение сбора **{title}**\n{hint}",
@@ -2282,89 +2404,64 @@ async def _create_event_message(channel, guild, title: str, max_count: int, imag
 # ─────────────────────────────────────────────
 # PREFIX-КОМАНДЫ СБОРОВ
 # ─────────────────────────────────────────────
+async def _extract_event_image(ctx) -> tuple[discord.File | None, str | None]:
+    """Достаёт вложенное к сообщению фото и готовит его для встраивания в эмбед сбора."""
+    if not ctx.message.attachments:
+        return None, None
+    att = ctx.message.attachments[0]
+    try:
+        img_bytes = await att.read()
+        ext       = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
+        safe_name = f"event_image.{ext}"
+        return discord.File(io.BytesIO(img_bytes), filename=safe_name), f"attachment://{safe_name}"
+    except Exception:
+        return None, None
+
+
+def _extract_event_time(название: str, default_title: str) -> tuple[str | None, str]:
+    """Вытаскивает ЧЧ:ММ из начала названия сбора, если оно там указано."""
+    m = re.match(r'^(\d{1,2}:\d{2})\s*(.*)', название)
+    if not m:
+        return None, название
+    return m.group(1), (m.group(2).strip() or default_title)
+
+
+def _event_mentions(guild: discord.Guild, role_ids: list) -> str | None:
+    """Собирает упоминания ролей для тега в сообщении сбора."""
+    mentions = []
+    for rid in role_ids:
+        if not rid:
+            continue
+        r = guild.get_role(rid)
+        if r:
+            mentions.append(r.mention)
+    return " ".join(mentions) if mentions else None
+
+
 @bot.command(name="vzp")
 async def взп_cmd(ctx, количество: int = 10, *, название: str = "ВЗП"):
     """!vzp [количество] [название] — сбор с фото (от лица бота)"""
     if not can_run_event(ctx, "vzp"):
         return await ctx.message.delete()
 
-    image_file = None
-    image_ref  = None
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            img_bytes  = await att.read()
-            ext        = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
-            safe_name  = f"event_image.{ext}"
-            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
-            image_ref  = f"attachment://{safe_name}"
-        except Exception:
-            pass
+    image_file, image_ref = await _extract_event_image(ctx)
 
     try:
         await ctx.message.delete()
     except Exception:
         pass
 
-    # Парсинг времени из начала названия
-    event_time = None
-    m = re.match(r'^(\d{1,2}:\d{2})\s*(.*)', название)
-    if m:
-        event_time = m.group(1)
-        название = m.group(2).strip() or "ВЗП"
+    event_time, название = _extract_event_time(название, "ВЗП")
 
     # Тег: роль ВЗП + роль МП + вторые роли
-    mentions = []
-    for rid in [vzp_roles.get(ctx.guild.id), vzp_roles2.get(ctx.guild.id), mp_roles.get(ctx.guild.id), mp_roles2.get(ctx.guild.id)]:
-        if rid:
-            r = ctx.guild.get_role(rid)
-            if r:
-                mentions.append(r.mention)
-    content = " ".join(mentions) if mentions else None
+    content = _event_mentions(ctx.guild, [
+        vzp_roles.get(ctx.guild.id),
+        vzp_roles2.get(ctx.guild.id),
+        mp_roles.get(ctx.guild.id),
+        mp_roles2.get(ctx.guild.id),
+    ])
 
     await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, event_time=event_time, cmd="vzp")
-
-
-@bot.command(name="mp")
-async def мп_cmd(ctx, количество: int = 10, *, название: str = "МП"):
-    """!mp [количество] [название] — сбор МП"""
-    if not can_run_event(ctx, "mp"):
-        return await ctx.message.delete()
-
-    image_file = None
-    image_ref  = None
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            img_bytes  = await att.read()
-            ext        = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
-            safe_name  = f"event_image.{ext}"
-            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
-            image_ref  = f"attachment://{safe_name}"
-        except Exception:
-            pass
-
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    # Парсинг времени из начала названия
-    event_time = None
-    m = re.match(r'^(\d{1,2}:\d{2})\s*(.*)', название)
-    if m:
-        event_time = m.group(1)
-        название = m.group(2).strip() or "МП"
-
-    mentions = []
-    for rid in [mp_roles.get(ctx.guild.id), mp_roles2.get(ctx.guild.id)]:
-        if rid:
-            r = ctx.guild.get_role(rid)
-            if r:
-                mentions.append(r.mention)
-    content = " ".join(mentions) if mentions else None
-
-    await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, event_time=event_time, cmd="mp")
 
 
 @bot.command(name="vzh")
@@ -2394,38 +2491,23 @@ async def взх_cmd(ctx, *, args: str = ""):
             delete_after=8,
         )
 
-    image_file = None
-    image_ref  = None
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            img_bytes  = await att.read()
-            ext        = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
-            safe_name  = f"event_image.{ext}"
-            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
-            image_ref  = f"attachment://{safe_name}"
-        except Exception:
-            pass
+    image_file, image_ref = await _extract_event_image(ctx)
 
     try:
         await ctx.message.delete()
     except Exception:
         pass
 
-    mentions = []
-    vzh_role_id = vzh_roles.get(ctx.guild.id)
-    if vzh_role_id:
-        r = ctx.guild.get_role(vzh_role_id)
-        if r:
-            mentions.append(r.mention)
-    vzh2_role_id = vzh_roles2.get(ctx.guild.id)
-    if vzh2_role_id:
-        r = ctx.guild.get_role(vzh2_role_id)
-        if r:
-            mentions.append(r.mention)
-    content = " ".join(mentions) if mentions else None
+    content = _event_mentions(ctx.guild, [
+        vzh_roles.get(ctx.guild.id),
+        vzh_roles2.get(ctx.guild.id),
+    ])
 
-    await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, force_join_mode=True, event_time=event_time, cmd="vzh")
+    hour, minute = map(int, event_time.split(":"))
+    faction = get_vzh_faction(ctx.guild.id)
+    event_datetime = next_vzh_datetime(now_msk(), hour, minute, faction).isoformat()
+
+    await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, force_join_mode=True, event_time=event_time, cmd="vzh", event_datetime=event_datetime)
 
 
 @bot.command(name="роль_взх")
@@ -2481,14 +2563,14 @@ async def set_vzp_role(ctx, роль: discord.Role):
 
 @bot.command(name="роль_мп")
 async def set_mp_role(ctx, роль: discord.Role):
-    """!роль_мп @роль — настроить роль МП для тега в !vzp и !mp"""
+    """!роль_мп @роль — настроить роль МП для тега в !vzp"""
     if not is_admin_ctx(ctx):
         return await ctx.message.delete()
     mp_roles[ctx.guild.id] = роль.id
     save_data()
     embed = discord.Embed(
         title="✅ Роль МП настроена",
-        description=f"В `!vzp` и `!mp` будет тегаться {роль.mention}",
+        description=f"В `!vzp` будет тегаться {роль.mention}",
         color=discord.Color.green(),
     )
     embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
@@ -2515,14 +2597,14 @@ async def set_vzp_role2(ctx, роль: discord.Role):
 
 @bot.command(name="роль_мп2")
 async def set_mp_role2(ctx, роль: discord.Role):
-    """!роль_мп2 @роль — вторая роль для тега в !vzp и !mp"""
+    """!роль_мп2 @роль — вторая роль для тега в !vzp"""
     if not is_admin_ctx(ctx):
         return await ctx.message.delete()
     mp_roles2[ctx.guild.id] = роль.id
     save_data()
     embed = discord.Embed(
         title="✅ Роль МП-2 настроена",
-        description=f"В `!vzp` и `!mp` дополнительно будет тегаться {роль.mention}",
+        description=f"В `!vzp` дополнительно будет тегаться {роль.mention}",
         color=discord.Color.green(),
     )
     embed.set_footer(text="MORIARTY", icon_url=_footer(ctx.guild.id))
@@ -2549,12 +2631,11 @@ async def set_list_role2(ctx, роль: discord.Role):
 
 @tree.command(name="доступ_сбора", description="Добавить роль с доступом к команде сбора")
 @app_commands.describe(
-    тип="Тип сбора: vzp, mp, list или vzh",
+    тип="Тип сбора: vzp, list или vzh",
     роль="Роль, которая получит доступ к команде"
 )
 @app_commands.choices(тип=[
     app_commands.Choice(name="vzp", value="vzp"),
-    app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
     app_commands.Choice(name="reaki", value="reaki"),
     app_commands.Choice(name="vzh", value="vzh"),
@@ -2579,12 +2660,11 @@ async def slash_event_access_add(interaction: discord.Interaction, тип: str, 
 
 @tree.command(name="убрать_доступ_сбора", description="Убрать роль из доступа к команде сбора")
 @app_commands.describe(
-    тип="Тип сбора: vzp, mp, list или vzh",
+    тип="Тип сбора: vzp, list или vzh",
     роль="Роль, которую убрать"
 )
 @app_commands.choices(тип=[
     app_commands.Choice(name="vzp", value="vzp"),
-    app_commands.Choice(name="mp", value="mp"),
     app_commands.Choice(name="list", value="list"),
     app_commands.Choice(name="reaki", value="reaki"),
     app_commands.Choice(name="vzh", value="vzh"),
@@ -2607,38 +2687,19 @@ async def реаки_cmd(ctx, количество: int = 10, *, названи�
     if not can_run_event(ctx, "list"):
         return await ctx.message.delete()
 
-    image_file = None
-    image_ref  = None
-    if ctx.message.attachments:
-        att = ctx.message.attachments[0]
-        try:
-            img_bytes  = await att.read()
-            ext        = att.filename.rsplit(".", 1)[-1].lower() if "." in att.filename else "png"
-            safe_name  = f"event_image.{ext}"
-            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
-            image_ref  = f"attachment://{safe_name}"
-        except Exception:
-            pass
+    image_file, image_ref = await _extract_event_image(ctx)
 
     try:
         await ctx.message.delete()
     except Exception:
         pass
 
-    # Парсинг времени из начала названия
-    event_time = None
-    m = re.match(r'^(\d{1,2}:\d{2})\s*(.*)', название)
-    if m:
-        event_time = m.group(1)
-        название = m.group(2).strip() or "Реакции"
+    event_time, название = _extract_event_time(название, "Реакции")
 
-    mentions = []
-    for rid in [event_roles.get(ctx.guild.id), list_roles2.get(ctx.guild.id)]:
-        if rid:
-            r = ctx.guild.get_role(rid)
-            if r:
-                mentions.append(r.mention)
-    content = " ".join(mentions) if mentions else None
+    content = _event_mentions(ctx.guild, [
+        event_roles.get(ctx.guild.id),
+        list_roles2.get(ctx.guild.id),
+    ])
 
     await _create_event_message(ctx.channel, ctx.guild, название, количество, image_file, image_ref, content=content, force_join_mode=True, event_time=event_time, cmd="list")
 
@@ -2679,7 +2740,7 @@ async def spisok_cmd(ctx):
 
 
 # ─────────────────────────────────────────────
-# СЛЭШ-ВЕРСИИ СБОРОВ: /vzp  /mp  /list
+# СЛЭШ-ВЕРСИИ СБОРОВ: /vzp  /list
 # ─────────────────────────────────────────────
 def _can_run_event_slash(interaction, event_type):
     if is_admin(interaction):
@@ -2725,43 +2786,6 @@ async def slash_vzp(
     await interaction.delete_original_response()
     await _create_event_message(interaction.channel, interaction.guild, название, количество, image_file, image_ref, content=content, event_time=время, cmd="vzp")
 
-
-@tree.command(name="mp", description="Создать сбор МП")
-@app_commands.describe(
-    количество="Максимум участников (по умолчанию 10)",
-    название="Название сбора (по умолчанию МП)",
-    время="Время сбора (например 20:00)",
-    картинка="Прикрепить изображение к сбору",
-)
-async def slash_mp(
-    interaction: discord.Interaction,
-    количество: app_commands.Range[int, 1] = 10,
-    название: str = "МП",
-    время: str = None,
-    картинка: discord.Attachment = None,
-):
-    if not _can_run_event_slash(interaction, "mp"):
-        return await interaction.response.send_message("❌ Нет доступа к этой команде.", ephemeral=True)
-    await interaction.response.defer()
-    image_file, image_ref = None, None
-    if картинка:
-        try:
-            img_bytes = await картинка.read()
-            ext = картинка.filename.rsplit(".", 1)[-1].lower() if "." in картинка.filename else "png"
-            safe_name = f"event_image.{ext}"
-            image_file = discord.File(io.BytesIO(img_bytes), filename=safe_name)
-            image_ref = f"attachment://{safe_name}"
-        except Exception:
-            pass
-    mentions = []
-    for rid in [mp_roles.get(interaction.guild_id), mp_roles2.get(interaction.guild_id)]:
-        if rid:
-            r = interaction.guild.get_role(rid)
-            if r:
-                mentions.append(r.mention)
-    content = " ".join(mentions) if mentions else None
-    await interaction.delete_original_response()
-    await _create_event_message(interaction.channel, interaction.guild, название, количество, image_file, image_ref, content=content, event_time=время, cmd="mp")
 
 
 @tree.command(name="list", description="Создать сбор на мероприятие (реакции)")
@@ -3637,7 +3661,6 @@ async def slash_settings(interaction: discord.Interaction):
         name="🎯 Доступ к сборам",
         value=(
             f"`!vzp`: {roles_list_str('vzp')}\n"
-            f"`!mp`: {roles_list_str('mp')}\n"
             f"`!list`: {roles_list_str('list')}\n"
             f"`!vzh`: {roles_list_str('vzh')}"
         ),
@@ -3720,7 +3743,6 @@ def build_cfg_main_embed(guild: discord.Guild) -> discord.Embed:
     ), inline=True)
     e.add_field(name="🎯 Сборы", value=(
         f"ВЗП: {_ecr('vzp')}\n"
-        f"МП: {_ecr('mp')}\n"
         f"Реаки: {_ecr('list')}\n"
         f"ВЗХ: {_ecr('vzh')}"
     ), inline=True)
@@ -3817,16 +3839,21 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
         e.title = "🎯 Доступ к командам сбора"
         e.description = (
             f"**!vzp:**\n{_ecr('vzp')}\n\n"
-            f"**!mp:**\n{_ecr('mp')}\n\n"
             f"**!list:**\n{_ecr('list')}\n\n"
             f"**!vzh:**\n{_ecr('vzh')}"
         )
-    elif category in ("event_vzp", "event_mp", "event_list", "event_vzh"):
+    elif category in ("event_vzp", "event_list", "event_vzh"):
         etype = category.split("_", 1)[1]
         ecr = event_command_roles.get(gid, {})
         ids = ecr.get(etype, [])
         e.title = f"🎯 Доступ к !{etype}"
         e.description = f"Роли:\n{_roles_list(guild, ids)}\n\nДобавь или убери роль ниже."
+        if etype == "vzh":
+            faction = get_vzh_faction(gid)
+            e.description += (
+                f"\n\n**Фракция для расписания ВЗХ:** {VZH_FACTION_LABELS.get(faction, faction)}\n"
+                f"Дни: {_vzh_schedule_str(faction)}"
+            )
     elif category == "voice":
         vs = voice_reward_settings.get(gid, {})
         e.title = "🔊 Голосовые каналы"
@@ -3896,21 +3923,29 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
 
 # ── Главное меню ─────────────────────────────────────────────────────────────
 
+# Категории настроек разбиты на 2 страницы, чтобы панель не была перегружена.
+CFG_CATEGORY_PAGES = [
+    [
+        discord.SelectOption(label="📋 Заявки",        value="tickets", description="Менеджер, пинг, лог, доступ, текст"),
+        discord.SelectOption(label="🔑 Роли системы",  value="roles",   description="МП, ВЗП, Реаки, Магазин"),
+        discord.SelectOption(label="⚠️ Варн-роли",     value="warns",   description="Роли за 1, 2, 3 предупреждения"),
+        discord.SelectOption(label="📢 Каналы / Логи", value="logs",    description="Логи и feedback канал/роль"),
+        discord.SelectOption(label="🎯 Сборы",          value="events",  description="Доступ к !vzp !vzh !list"),
+    ],
+    [
+        discord.SelectOption(label="🔊 Голосовые",      value="voice",   description="Баллы, категории, исключения"),
+        discord.SelectOption(label="🖼 Контент",        value="content", description="Тексты, фото, ссылки панелей"),
+        discord.SelectOption(label="💾 Бэкапы",         value="backup",  description="Канал, файлы и период автобэкапа"),
+        discord.SelectOption(label="🎙 Войс-присутствие", value="voice_presence", description="Бот всегда сидит в голосовом канале"),
+        discord.SelectOption(label="⚔️ PvP-события",    value="pvp",     description="AirDrop, чёрный рынок, война за граффити"),
+    ],
+]
+
+
 class CfgCategorySelect(ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="📋 Заявки",        value="tickets", description="Менеджер, пинг, лог, доступ, текст"),
-            discord.SelectOption(label="🔑 Роли системы",  value="roles",   description="МП, ВЗП, Реаки, Магазин"),
-            discord.SelectOption(label="⚠️ Варн-роли",     value="warns",   description="Роли за 1, 2, 3 предупреждения"),
-            discord.SelectOption(label="📢 Каналы / Логи", value="logs",    description="Логи и feedback канал/роль"),
-            discord.SelectOption(label="🎯 Сборы",          value="events",  description="Доступ к !vzp !mp !list"),
-            discord.SelectOption(label="🔊 Голосовые",      value="voice",   description="Баллы, категории, исключения"),
-            discord.SelectOption(label="🖼 Контент",        value="content", description="Тексты, фото, ссылки панелей"),
-            discord.SelectOption(label="💾 Бэкапы",         value="backup",  description="Канал, файлы и период автобэкапа"),
-            discord.SelectOption(label="🎙 Войс-присутствие", value="voice_presence", description="Бот всегда сидит в голосовом канале"),
-            discord.SelectOption(label="⚔️ PvP-события",    value="pvp",     description="AirDrop, чёрный рынок, война за граффити"),
-        ]
-        super().__init__(placeholder="Выбери категорию настроек…", options=options, row=0)
+    def __init__(self, page: int = 1):
+        options = CFG_CATEGORY_PAGES[page - 1]
+        super().__init__(placeholder=f"Выбери категорию настроек… (стр. {page}/{len(CFG_CATEGORY_PAGES)})", options=options, row=0)
 
     async def callback(self, interaction: discord.Interaction):
         cat   = self.values[0]
@@ -3920,9 +3955,22 @@ class CfgCategorySelect(ui.Select):
 
 
 class CfgMainView(ui.View):
-    def __init__(self):
+    def __init__(self, page: int = 1):
         super().__init__(timeout=300)
-        self.add_item(CfgCategorySelect())
+        self.add_item(CfgCategorySelect(page))
+
+        total_pages = len(CFG_CATEGORY_PAGES)
+        if total_pages > 1:
+            if page > 1:
+                prev_btn = _cfg_btn("◀ Страница назад", row=1)
+                async def _prev(inter, p=page): await inter.response.edit_message(embed=build_cfg_main_embed(inter.guild), view=CfgMainView(page=p - 1))
+                prev_btn.callback = _prev
+                self.add_item(prev_btn)
+            if page < total_pages:
+                next_btn = _cfg_btn("Страница вперёд ▶", row=1)
+                async def _next(inter, p=page): await inter.response.edit_message(embed=build_cfg_main_embed(inter.guild), view=CfgMainView(page=p + 1))
+                next_btn.callback = _next
+                self.add_item(next_btn)
 
 
 # ── Универсальные модали ──────────────────────────────────────────────────────
@@ -4251,7 +4299,7 @@ class _CfgEventsView(ui.View):
         back.callback = _back
         self.add_item(back)
 
-        for label, etype in [("⚔️ ВЗП", "vzp"), ("🏎 МП", "mp"), ("🎯 Реаки", "list"), ("⛏ ВЗХ", "vzh")]:
+        for label, etype in [("⚔️ ВЗП", "vzp"), ("🎯 Реаки", "list"), ("⛏ ВЗХ", "vzh")]:
             btn = _cfg_btn(label, style=discord.ButtonStyle.primary, row=1)
             async def _cb(inter, et=etype):
                 await inter.response.edit_message(
@@ -4260,6 +4308,29 @@ class _CfgEventsView(ui.View):
                 )
             btn.callback = _cb
             self.add_item(btn)
+
+
+class _CfgVzhFactionSelect(ui.Select):
+    """Явный выбор фракции для расписания ВЗХ (banda/mafia) — не тумблер, чтобы не путать текущее состояние."""
+    def __init__(self, guild_id: int):
+        current = get_vzh_faction(guild_id)
+        options = [
+            discord.SelectOption(label=VZH_FACTION_LABELS["banda"], value="banda",
+                                  description=f"Дни: {_vzh_schedule_str('banda')}", default=(current == "banda")),
+            discord.SelectOption(label=VZH_FACTION_LABELS["mafia"], value="mafia",
+                                  description=f"Дни: {_vzh_schedule_str('mafia')}", default=(current == "mafia")),
+        ]
+        super().__init__(placeholder="📅 Фракция для расписания ВЗХ…", options=options, row=3)
+
+    async def callback(self, interaction: discord.Interaction):
+        faction = self.values[0]
+        vzh_schedule_settings[interaction.guild_id] = faction
+        save_data()
+        await interaction.response.send_message(
+            f"✅ Расписание ВЗХ: {VZH_FACTION_LABELS[faction]} ({_vzh_schedule_str(faction)})", ephemeral=True
+        )
+        embed = build_cfg_category_embed(interaction.guild, "event_vzh")
+        await interaction.message.edit(embed=embed, view=_CfgEventTypeView(interaction.guild, "vzh"))
 
 
 class _CfgEventTypeView(ui.View):
@@ -4281,6 +4352,9 @@ class _CfgEventTypeView(ui.View):
         self.add_item(_CfgRoleAddPicker(get_list, cat_key, 1, f"➕ Добавить роль к !{etype}"))
         current = (event_command_roles.get(gid) or {}).get(etype, [])
         self.add_item(_CfgRoleRemoveSelect(guild, current, get_list, cat_key, 2, f"➖ Убрать роль из !{etype}"))
+
+        if etype == "vzh":
+            self.add_item(_CfgVzhFactionSelect(gid))
 
 
 class _CfgVoiceView(ui.View):
@@ -4997,6 +5071,8 @@ async def on_message(message: discord.Message):
     if gid not in message_counts:
         message_counts[gid] = {}
     message_counts[gid][uid] = message_counts[gid].get(uid, 0) + 1
+    if isinstance(message.channel, discord.Thread):
+        await _handle_thread_slot_pick(message)
     await bot.process_commands(message)
 
 
@@ -8368,18 +8444,24 @@ async def vzh_reminder_loop():
         if ev.get("cmd") != "vzh" or ev.get("closed") or ev.get("reminded"):
             continue
         try:
-            m = _re.match(r"^(\d{1,2}):(\d{2})$", (ev.get("event_time") or "").strip())
-            if not m:
-                continue
-            hour, minute = int(m.group(1)), int(m.group(2))
-            created_at = ev.get("created_at")
-            anchor = datetime.fromisoformat(created_at) if created_at else now_msk_dt
-            try:
-                target = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            except ValueError:
-                continue
-            if target < anchor:
-                target += timedelta(days=1)
+            event_dt_str = ev.get("event_datetime")
+            if event_dt_str:
+                # Точная дата/время, посчитанные при создании сбора по расписанию ВЗХ фракции
+                target = datetime.fromisoformat(event_dt_str)
+            else:
+                # Старые сборы (созданы до появления event_datetime) — прежняя эвристика "сегодня/завтра"
+                m = _re.match(r"^(\d{1,2}):(\d{2})$", (ev.get("event_time") or "").strip())
+                if not m:
+                    continue
+                hour, minute = int(m.group(1)), int(m.group(2))
+                created_at = ev.get("created_at")
+                anchor = datetime.fromisoformat(created_at) if created_at else now_msk_dt
+                try:
+                    target = anchor.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                except ValueError:
+                    continue
+                if target < anchor:
+                    target += timedelta(days=1)
             remind_at = target - timedelta(minutes=30)
             if not (remind_at <= now_msk_dt < target):
                 continue

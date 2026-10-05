@@ -62,7 +62,7 @@ async function init() {
   const first = state.me.guilds.find(g => g.bot_present);
   if (!first) {
     $("#main").replaceChildren(el("div", { class: "empty" },
-      "Нет серверов, где есть бот и у вас достаточно прав (Администратор или «Управление сервером»)."));
+      "Нет серверов, где есть бот и вы администратор."));
     return;
   }
   const saved = localStorage.getItem("guild");
@@ -332,7 +332,7 @@ function tableCard(m, t) {
   api(`${base()}/modules/${m.key}/tables/${t.id}`).then(rows => {
     if (!rows.length) { card.replaceChildren(head(), el("div", { class: "empty" }, "Пока пусто.")); return; }
     const cell = (c, r) => c.format === "link" && r[c.key]
-      ? el("td", {}, el("a", { href: r[c.key], target: "_blank", rel: "noopener" }, "Открыть"))
+      ? el("td", {}, el("a", { href: /^(\/|https:\/\/)/.test(r[c.key]) ? r[c.key] : "#", target: "_blank", rel: "noopener noreferrer" }, "Открыть"))
       : el("td", {}, String(fmt(c, r[c.key])));
     body.replaceChildren(...rows.map(r => el("tr", {}, t.columns.map(c => cell(c, r)))));
   }).catch(e => card.append(el("div", { class: "empty" }, e.message)));

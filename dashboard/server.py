@@ -4,7 +4,7 @@ reads channels/roles straight from the bot's cache) and replaces the old
 health-check thread: GET /health still answers "OK" on $PORT.
 
 Auth: Discord OAuth2 (identify + guilds). A user may manage a guild when the
-bot is in it AND they own it / have Administrator / Manage Server there, or
+bot is in it AND they own it / have Administrator there (Manage Server only with DASHBOARD_ALLOW_MANAGE_GUILD=1), or
 their id is in DASHBOARD_OWNER_IDS. Sessions live in memory (a restart just
 logs people out); the cookie carries only a random token.
 
@@ -12,6 +12,7 @@ Env:
   DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET   OAuth application
   DASHBOARD_URL            public base URL, e.g. https://bot.example.com  (redirect = <url>/auth/callback)
   DASHBOARD_OWNER_IDS      comma-separated user ids that can manage every guild the bot is in
+  DASHBOARD_ALLOW_MANAGE_GUILD   1 = also let members with "Manage Server" in (default: Administrators only)
   PORT                     listen port (default 10000, what the old health server used)
 """
 
@@ -32,6 +33,7 @@ from core import db, modules
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DISCORD_API = "https://discord.com/api/v10"
 COOKIE = "moriarty_session"
+STATE_COOKIE = "moriarty_oauth"
 SESSION_TTL = 7 * 24 * 3600
 PERM_ADMIN = 0x8
 PERM_MANAGE_GUILD = 0x20
@@ -45,6 +47,12 @@ _route_hooks: list = []
 
 def register_routes(fn) -> None:
     _route_hooks.append(fn)
+
+
+def _allow_manage_guild() -> bool:
+    """By default only server Administrators/owner may use the panel: with "Manage Server" alone a person could
+    publish a role button that hands out an admin role. Opt in with DASHBOARD_ALLOW_MANAGE_GUILD=1."""
+    return os.getenv("DASHBOARD_ALLOW_MANAGE_GUILD", "").lower() in ("1", "true", "yes")
 
 
 def _owner_ids() -> set[int]:
@@ -97,7 +105,19 @@ def _can_manage(session: dict, guild_id: int) -> bool:
     if not g:
         return False
     perms = int(g.get("permissions") or 0)
-    return bool(g.get("owner")) or bool(perms & (PERM_ADMIN | PERM_MANAGE_GUILD))
+    return bool(g.get("owner")) or bool(perms & PERM_ADMIN) or (_allow_manage_guild() and bool(perms & PERM_MANAGE_GUILD))
+
+
+def _live_access(guild, user_id: int) -> bool:
+    """Re-check against the bot's own view of the server: the login-time permission
+    snapshot can be days old, so a demoted or departed admin must not keep access."""
+    if user_id in _owner_ids() or guild.owner_id == user_id:
+        return True
+    member = guild.get_member(user_id)
+    if member is None:
+        return False
+    perms = member.guild_permissions
+    return bool(perms.administrator or (_allow_manage_guild() and perms.manage_guild))
 
 
 def _guild_for(request: web.Request):
@@ -112,12 +132,16 @@ def _guild_for(request: web.Request):
     guild = request.app["bot"].get_guild(gid)
     if guild is None:
         raise web.HTTPNotFound(text='{"error":"bot is not on this server"}', content_type="application/json")
+    if not _live_access(guild, session["user"]["id"]):
+        raise web.HTTPForbidden(text='{"error":"no access to this server"}', content_type="application/json")
     return session, guild
 
 
 def _check_origin(request: web.Request) -> None:
     """State-changing calls must come from our own pages (SameSite=Lax already
     blocks cross-site POSTs; this also rejects odd Origins)."""
+    if request.headers.get("Sec-Fetch-Site") == "cross-site":
+        raise web.HTTPForbidden(text='{"error":"cross-site request"}', content_type="application/json")
     origin = request.headers.get("Origin")
     if origin and origin.rstrip("/") not in (_base_url(request), f"{request.scheme}://{request.host}"):
         raise web.HTTPForbidden(text='{"error":"bad origin"}', content_type="application/json")
@@ -141,13 +165,20 @@ async def auth_login(request):
         "client_id": client_id, "response_type": "code", "scope": "identify guilds",
         "redirect_uri": f"{_base_url(request)}/auth/callback", "state": state, "prompt": "none",
     })
-    raise web.HTTPFound(f"https://discord.com/oauth2/authorize?{q}")
+    resp = web.HTTPFound(f"https://discord.com/oauth2/authorize?{q}")
+    resp.set_cookie(STATE_COOKIE, state, max_age=600, httponly=True, samesite="Lax",
+                    secure=_base_url(request).startswith("https"))
+    raise resp
 
 
 async def auth_callback(request):
     state, code = request.query.get("state"), request.query.get("code")
-    if not code or _oauth_states.pop(state or "", None) is None:
+    # the state must be one we issued AND belong to this very browser (stops login-CSRF)
+    if (not code or _oauth_states.pop(state or "", None) is None
+            or not secrets.compare_digest(request.cookies.get(STATE_COOKIE, ""), state or "-")):
         return web.Response(status=400, text="Неверный state или code, попробуй войти заново.")
+    for tok in [t for t, s in sessions.items() if time.time() - s["created"] > SESSION_TTL]:
+        sessions.pop(tok, None)
     async with aiohttp.ClientSession() as http:
         async with http.post(f"{DISCORD_API}/oauth2/token", data={
             "client_id": os.getenv("DISCORD_CLIENT_ID"), "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
@@ -168,6 +199,7 @@ async def auth_callback(request):
         "guilds": {int(g["id"]): g for g in guilds},
     }
     resp = web.HTTPFound("/")
+    resp.del_cookie(STATE_COOKIE)
     resp.set_cookie(COOKIE, _new_session(session), max_age=SESSION_TTL, httponly=True,
                     samesite="Lax", secure=_base_url(request).startswith("https"))
     raise resp
@@ -189,6 +221,9 @@ async def api_me(request):
     guilds = []
     for gid, g in s["guilds"].items():
         if not _can_manage(s, gid):
+            continue
+        live = bot.get_guild(gid)
+        if live is not None and not _live_access(live, s["user"]["id"]):
             continue
         guilds.append({"id": str(gid), "name": g["name"], "icon": g.get("icon"),
                        "bot_present": bot.get_guild(gid) is not None})
@@ -336,12 +371,28 @@ async def _errors(request, handler):
         raise
 
 
+_APP_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+
+
+@web.middleware
+async def _security_headers(request, handler):
+    resp = await handler(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    resp.headers.setdefault("Content-Security-Policy", _APP_CSP)       # transcripts set their own, stricter one
+    if request.path.startswith(("/api/", "/auth/")):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 async def _index(request):
     return web.FileResponse(STATIC_DIR / "index.html")
 
 
 def create_app(bot) -> web.Application:
-    app = web.Application(middlewares=[_errors])
+    app = web.Application(middlewares=[_security_headers, _errors])
     app["bot"] = bot
     r = app.router
     r.add_get("/health", health)

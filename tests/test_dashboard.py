@@ -9,9 +9,12 @@ from core import db, modules
 from dashboard import server
 
 
+MEMBERS = {5: NS(guild_permissions=NS(administrator=True, manage_guild=False))}
+
+
 def fake_guild(gid=111):
     ch = lambda i, n, t: NS(id=i, name=n, type=NS(name=t), position=i, category_id=900)
-    return NS(id=gid, name="Test", member_count=5, icon=None,
+    return NS(id=gid, name="Test", member_count=5, icon=None, owner_id=1, get_member=MEMBERS.get,
               categories=[NS(id=900, name="Main")],
               channels=[ch(1, "general", "text"), ch(2, "Voice", "voice")],
               roles=[NS(id=gid, name="@everyone", color=NS(value=0), managed=False, position=0, is_default=lambda: True),
@@ -33,7 +36,7 @@ async def main():
         assert (await c.get("/api/guild/111/modules")).status == 401
 
         tok = server._new_session({"user": {"id": 5, "name": "tester", "avatar": None},
-                                   "guilds": {111: {"id": "111", "name": "Test", "permissions": "32", "owner": False},
+                                   "guilds": {111: {"id": "111", "name": "Test", "permissions": "8", "owner": False},
                                               222: {"id": "222", "name": "Other", "permissions": "0", "owner": False}}})
         c.session.cookie_jar.update_cookies({server.COOKIE: tok})
         me = await (await c.get("/api/me")).json()
@@ -93,6 +96,33 @@ async def main():
         audit = await (await c.get("/api/guild/111/audit")).json()
         assert any(a["action"] == "action:give" for a in audit)
         assert (await c.get("/")).status == 200
+        # ── security: headers, live permission re-check, login-CSRF, cross-site
+        r = await c.get("/api/me")
+        assert r.headers["X-Frame-Options"] == "DENY" and r.headers["X-Content-Type-Options"] == "nosniff" and r.headers["Cache-Control"] == "no-store"
+        assert "frame-ancestors 'none'" in (await c.get("/")).headers["Content-Security-Policy"]
+        assert (await c.put("/api/guild/111/modules/demo", json={"n": 5}, headers={"Sec-Fetch-Site": "cross-site"})).status == 403
+        MEMBERS[5] = NS(guild_permissions=NS(administrator=False, manage_guild=True))         # Manage Server alone is not enough...
+        assert (await c.get("/api/guild/111/modules")).status == 403
+        server.os.environ["DASHBOARD_ALLOW_MANAGE_GUILD"] = "1"                                 # ...unless explicitly allowed
+        assert (await c.get("/api/guild/111/modules")).status == 200
+        del server.os.environ["DASHBOARD_ALLOW_MANAGE_GUILD"]
+        MEMBERS[5] = NS(guild_permissions=NS(administrator=False, manage_guild=False))        # demoted after login
+        assert (await c.get("/api/guild/111/modules")).status == 403
+        assert [x["id"] for x in (await (await c.get("/api/me")).json())["guilds"]] == []
+        del MEMBERS[5]                                                                          # left the server
+        assert (await c.get("/api/guild/111/modules")).status == 403
+        MEMBERS[5] = NS(guild_permissions=NS(administrator=True, manage_guild=False))           # promoted back
+        assert (await c.get("/api/guild/111/modules")).status == 200
+        server.os.environ["DASHBOARD_OWNER_IDS"] = "5"; del MEMBERS[5]                          # bot owners always get in
+        assert (await c.get("/api/guild/111/modules")).status == 200
+        del server.os.environ["DASHBOARD_OWNER_IDS"]; MEMBERS[5] = NS(guild_permissions=NS(administrator=True, manage_guild=False))
+        # OAuth callback: state must match the cookie of THIS browser
+        server._oauth_states["abc"] = __import__("time").time()
+        assert (await c.get("/auth/callback?code=x&state=abc", allow_redirects=False)).status == 400          # no state cookie
+        server._oauth_states["abc"] = __import__("time").time()
+        c.session.cookie_jar.update_cookies({server.STATE_COOKIE: "other"})
+        assert (await c.get("/auth/callback?code=x&state=abc", allow_redirects=False)).status == 400          # someone else's state
+        assert (await c.get("/auth/callback?code=x&state=unknown", allow_redirects=False)).status == 400
         assert (await c.post("/auth/logout")).status == 200
         assert (await c.get("/api/me")).status == 401
     print("dashboard tests OK")

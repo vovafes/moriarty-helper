@@ -121,11 +121,13 @@ async def main():
 
     # transcript route: needs login + guild access, serves with a locked-down CSP
     bot = NS(get_guild=lambda i: guild if i == 1 else None, guilds=[guild])
+    guild.owner_id = 1
+    guild.get_member = lambda i: NS(guild_permissions=NS(administrator=True, manage_guild=False)) if i == 5 else members.get(i)
     async with TestClient(TestServer(server.create_app(bot))) as c:
         url = f"/transcripts/1/{t['id']}"
         assert (await c.get(url)).status == 401
         tok = server._new_session({"user": {"id": 5, "name": "x", "avatar": None},
-                                   "guilds": {1: {"id": "1", "name": "Fam", "permissions": "32", "owner": False}}})
+                                   "guilds": {1: {"id": "1", "name": "Fam", "permissions": "8", "owner": False}}})
         c.session.cookie_jar.update_cookies({server.COOKIE: tok})
         r = await c.get(url); body = await r.text()
         assert r.status == 200 and "help me" in body and "default-src 'none'" in r.headers["Content-Security-Policy"]

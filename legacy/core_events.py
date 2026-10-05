@@ -247,7 +247,10 @@ async def on_ready():
             bot.add_view(TicketPanelView(cat_id))
     for message_id in event_lists:
         bot.add_view(ThreadListView(message_id))
-    await tree.sync()
+    try:
+        await tree.sync()
+    except discord.HTTPException as exc:       # e.g. over the 100-command limit: don't abort the rest of startup
+        print(f"WARNING: tree.sync не удался, слэш-команды не обновлены: {exc}")
     if not vzp_monitor_loop.is_running():
         vzp_monitor_loop.start()
     print(f"Bot online: {bot.user} (ID: {bot.user.id})")

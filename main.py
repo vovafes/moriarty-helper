@@ -8552,6 +8552,7 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.server_logging",
     "modules.moderation",
     "modules.automod",
+    "modules.anti_nuke",
 ]
 
 

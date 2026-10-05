@@ -52,3 +52,25 @@
 - **Данные:** Хранятся в `data.json`, `obshak.json`, `points.json`, `chips.json`, `roulette.json`.
 - **Время:** Работает по Московскому времени (UTC+3).
 - **Разработка:** См. `AI-FAQ.md` для технических деталей.
+
+
+---
+
+## 🖥 Веб-панель (ветка `dashboard`)
+
+Панель работает внутри процесса бота на том же `$PORT` (раньше там стоял health-сервер; `/health` по-прежнему отвечает `OK`).
+
+**Настройка один раз:**
+1. https://discord.com/developers/applications → ваше приложение → **OAuth2** → Redirects: добавить `<DASHBOARD_URL>/auth/callback`.
+2. В `.env` (или переменных хостинга):
+   ```
+   DISCORD_CLIENT_ID=...
+   DISCORD_CLIENT_SECRET=...
+   DASHBOARD_URL=https://ваш-домен        # для локального теста: http://localhost:10000
+   DASHBOARD_OWNER_IDS=ваш_discord_id     # видит и управляет всеми серверами бота
+   ```
+3. Открыть `DASHBOARD_URL`, войти через Discord. Доступ у тех, у кого на сервере «Администратор» или «Управление сервером».
+
+**Структура:** `core/` — SQLite, реестр модулей, журнал действий; `dashboard/` — сервер и интерфейс; `modules/` — модули-cog'и (каждый описывает схему настроек, форма в панели строится сама). Старые JSON-данные и логика `main.py` не тронуты.
+
+**Модули:** Логи, Модерация (`/mute /kick /ban /tempban /unban /purge /cases`), AutoMod, Anti-Nuke. Тесты: `venv/bin/python -m tests.test_<имя>`.

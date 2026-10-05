@@ -51,10 +51,10 @@ modules.register(modules.Module(
         {"key": "require_reason", "label": "Причина обязательна", "type": "bool", "default": False},
         {"key": "purge_max", "label": "Максимум сообщений за /purge", "type": "number", "default": 100, "min": 1, "max": 500},
     ],
-    table={"title": "Последние дела", "columns": [
+    tables=[{"id": "cases", "title": "Последние дела", "columns": [
         {"key": "case_no", "label": "#"}, {"key": "type_label", "label": "Тип"},
         {"key": "user_name", "label": "Кому"}, {"key": "mod_name", "label": "Кто"},
-        {"key": "reason", "label": "Причина"}, {"key": "ts", "label": "Когда", "format": "time"}]},
+        {"key": "reason", "label": "Причина"}, {"key": "ts", "label": "Когда", "format": "time"}]}],
 ))
 
 TYPE_LABELS = {"mute": "Мут", "unmute": "Снятие мута", "kick": "Кик", "ban": "Бан",
@@ -121,7 +121,7 @@ def recent_cases(guild_id: int) -> list[dict]:
     return out
 
 
-modules.register_data("moderation", recent_cases)
+modules.register_table("moderation", "cases", lambda guild: recent_cases(guild.id))
 
 
 def due_tempbans(now: int) -> list[dict]:

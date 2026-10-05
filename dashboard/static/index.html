@@ -22,15 +22,20 @@
     <div class="guild-pick">
       <select id="guildSelect"></select>
     </div>
+    <input id="search" class="search" type="search" placeholder="Поиск модуля…" autocomplete="off">
     <nav id="nav"></nav>
     <div class="user">
       <span id="userName"></span>
       <button class="link" id="logoutBtn">Выйти</button>
     </div>
   </aside>
-  <main id="main"></main>
+  <div class="content">
+    <header class="topbar"><button class="btn menu-btn" id="menuBtn" aria-label="Меню">☰</button><span id="topTitle"></span></header>
+    <main id="main"></main>
+  </div>
 </div>
 
+<dialog id="dlg"></dialog>
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>
 </body>

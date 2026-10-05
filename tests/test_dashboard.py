@@ -58,6 +58,40 @@ async def main():
         assert [x["name"] for x in chans] == ["general", "Voice"] and chans[1]["kind"] == "voice"
         roles = await (await c.get("/api/guild/111/roles")).json()
         assert [x["name"] for x in roles] == ["Mod"]
+        # ── legacy-style adapter module: loader/saver, no on/off switch, table, action, multiselect/user fields
+        store = {"chan": 2, "files": ["a"], "owner": None}
+        saved = []
+        async def give(ctx, params):
+            store["owner"] = params["who"]; return f"gave {params['amount']} to {params['who']}"
+        modules.register(modules.Module(
+            "legacydemo", "Legacy", "adapter demo", "family", [
+                {"key": "chan", "label": "C", "type": "channel", "default": None},
+                {"key": "files", "label": "F", "type": "multiselect", "default": [], "options": ["a", "b"]},
+                {"key": "owner", "label": "O", "type": "user", "default": None}],
+            loader=lambda gid: dict(store), saver=lambda gid, cfg: (store.update({k: v for k, v in cfg.items() if k != "enabled"}), saved.append(gid)),
+            toggleable=False,
+            tables=[{"id": "t", "title": "T", "columns": [{"key": "x", "label": "X"}]}],
+            actions=[modules.Action("give", "Give", give, params=[
+                {"key": "who", "label": "Who", "type": "user"}, {"key": "amount", "label": "Amount", "type": "number", "min": 1}])]))
+        modules.register_table("legacydemo", "t", lambda guild: [{"x": guild.name}])
+        mods = {m["key"]: m for m in await (await c.get("/api/guild/111/modules")).json()}
+        ld = mods["legacydemo"]
+        assert ld["toggleable"] is False and ld["config"]["enabled"] is True and ld["config"]["chan"] == 2
+        assert ld["actions"][0]["key"] == "give" and ld["tables"][0]["id"] == "t"
+        r = await c.put("/api/guild/111/modules/legacydemo", json={"files": ["a", "b"], "owner": "<@42>"})
+        assert r.status == 200 and store["files"] == ["a", "b"] and store["owner"] == 42 and saved == [111]
+        assert (await c.put("/api/guild/111/modules/legacydemo", json={"files": ["zzz"]})).status == 400
+        assert (await c.put("/api/guild/111/modules/legacydemo", json={"owner": "abc"})).status == 400
+        assert await (await c.get("/api/guild/111/modules/legacydemo/tables/t")).json() == [{"x": "Test"}]
+        assert (await c.get("/api/guild/111/modules/legacydemo/tables/nope")).status == 404
+        r = await c.post("/api/guild/111/modules/legacydemo/actions/give", json={"params": {"who": "7", "amount": 5}})
+        assert r.status == 200 and (await r.json())["message"] == "gave 5 to 7", await r.text()
+        assert (await c.post("/api/guild/111/modules/legacydemo/actions/give", json={"params": {"who": "7", "amount": 0}})).status == 400
+        assert (await c.post("/api/guild/111/modules/legacydemo/actions/give", json={"params": {"amount": 1}})).status == 400
+        assert (await c.post("/api/guild/111/modules/legacydemo/actions/nope", json={})).status == 404
+        assert (await c.post("/api/guild/111/modules/legacydemo/actions/give", json={"params": {}}, headers={"Origin": "https://evil.example"})).status == 403
+        audit = await (await c.get("/api/guild/111/audit")).json()
+        assert any(a["action"] == "action:give" for a in audit)
         assert (await c.get("/")).status == 200
         assert (await c.post("/auth/logout")).status == 200
         assert (await c.get("/api/me")).status == 401

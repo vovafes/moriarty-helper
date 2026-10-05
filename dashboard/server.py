@@ -16,6 +16,7 @@ Env:
 """
 
 import asyncio
+import inspect
 import json
 import os
 import secrets
@@ -245,19 +246,48 @@ async def api_module_put(request):
     except ValueError:
         return _json_error(400, "expected a JSON object")
     try:
-        await db.run(modules.set_config, guild.id, key, patch,
-                     user_id=session["user"]["id"], user_name=session["user"]["name"])
+        # on the loop (not a worker thread): legacy adapters mutate the bot's own dicts,
+        # and sqlite writes here are a millisecond
+        modules.set_config(guild.id, key, patch,
+                           user_id=session["user"]["id"], user_name=session["user"]["name"])
     except modules.ValidationError as exc:
         return _json_error(400, str(exc))
     return web.json_response(_module_payload(guild.id, key))
 
 
-async def api_module_data(request):
+async def api_module_table(request):
     _, guild = _guild_for(request)
-    fn = modules.DATA_PROVIDERS.get(request.match_info["key"])
+    fn = modules.TABLE_PROVIDERS.get((request.match_info["key"], request.match_info["tid"]))
     if fn is None:
-        return _json_error(404, "this module has no data table")
-    return web.json_response(await db.run(fn, guild.id), dumps=lambda o: json.dumps(o, default=str))
+        return _json_error(404, "no such table")
+    rows = fn(guild)
+    if inspect.isawaitable(rows):
+        rows = await rows
+    return web.json_response(rows, dumps=lambda o: json.dumps(o, default=str))
+
+
+async def api_module_action(request):
+    _check_origin(request)
+    session, guild = _guild_for(request)
+    key, akey = request.match_info["key"], request.match_info["akey"]
+    if key not in modules.REGISTRY:
+        return _json_error(404, "unknown module")
+    try:
+        body = await request.json()
+        params = body.get("params", {}) if isinstance(body, dict) else {}
+    except ValueError:
+        return _json_error(400, "expected a JSON object")
+    ctx = modules.ActionContext(guild=guild, bot=request.app["bot"],
+                                user_id=session["user"]["id"], user_name=session["user"]["name"])
+    try:
+        message = await modules.run_action(key, akey, params, ctx)
+    except KeyError:
+        return _json_error(404, "unknown action")
+    except modules.ValidationError as exc:
+        return _json_error(400, str(exc))
+    except Exception as exc:   # an action failing must not look like a server crash
+        return _json_error(500, f"{type(exc).__name__}: {exc}")
+    return web.json_response({"ok": True, "message": message})
 
 
 async def api_channels(request):
@@ -319,7 +349,8 @@ def create_app(bot) -> web.Application:
     r.add_get("/api/guild/{gid}/modules", api_modules)
     r.add_get("/api/guild/{gid}/modules/{key}", api_module_get)
     r.add_put("/api/guild/{gid}/modules/{key}", api_module_put)
-    r.add_get("/api/guild/{gid}/modules/{key}/data", api_module_data)
+    r.add_get("/api/guild/{gid}/modules/{key}/tables/{tid}", api_module_table)
+    r.add_post("/api/guild/{gid}/modules/{key}/actions/{akey}", api_module_action)
     r.add_get("/api/guild/{gid}/channels", api_channels)
     r.add_get("/api/guild/{gid}/roles", api_roles)
     r.add_get("/api/guild/{gid}/audit", api_audit)

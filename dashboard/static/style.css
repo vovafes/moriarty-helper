@@ -109,3 +109,38 @@ td code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-
   padding: 10px 16px; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.35); max-width: 340px; }
 .toast.err { border-color: var(--danger); }
 .toast.ok { border-color: var(--ok); }
+
+/* ── v2: search, groups, actions, dialog, overview cards ─────────────────── */
+.search { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 7px 10px; font: inherit; }
+.content { min-width: 0; }
+.topbar { display: none; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border);
+  background: var(--panel); position: sticky; top: 0; z-index: 5; font-weight: 600; }
+.menu-btn { padding: 4px 10px; }
+@media (max-width: 760px) {
+  .topbar { display: flex; }
+  .sidebar { display: none; position: fixed; inset: 0 auto 0 0; width: 280px; z-index: 20; height: 100vh;
+    box-shadow: 8px 0 32px rgba(0,0,0,.5); }
+  .sidebar.open { display: flex; }
+}
+.cat-title { margin: 22px 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.mod { position: relative; }
+.mod h4 .switch { margin-left: auto; }
+.mod .meta { margin-top: 10px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.group-title { margin: 0 0 6px; font-size: 15px; }
+.group-help { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; }
+.checks label { display: flex; align-items: center; gap: 8px; font-weight: 400; cursor: pointer; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn.danger { border-color: var(--danger); color: var(--danger); }
+.btn.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 24px; width: min(460px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog h3 { margin: 0 0 4px; }
+dialog .field { grid-template-columns: 1fr; border-top: 0; padding: 8px 0; }
+dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.dirty { color: #f0b232; }
+.tbl-scroll { overflow-x: auto; }
+.search-empty { color: var(--muted); padding: 8px 10px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel2); color: var(--muted); }

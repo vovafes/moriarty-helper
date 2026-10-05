@@ -13,3 +13,6 @@ points.json
 roulette.json
 moriarty.sqlite
 moriarty.sqlite-*
+.env.bak
+.env.*
+!.env.example

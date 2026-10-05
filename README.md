@@ -60,7 +60,7 @@
 
 Панель работает внутри процесса бота на том же `$PORT` (раньше там стоял health-сервер; `/health` по-прежнему отвечает `OK`).
 
-**Настройка один раз:**
+**Настройка один раз** — проще всего скриптом: `venv/bin/python setup_dashboard.py` (спросит значения, допишет `.env` и подскажет адрес для Redirects). Вручную:
 1. https://discord.com/developers/applications → ваше приложение → **OAuth2** → Redirects: добавить `<DASHBOARD_URL>/auth/callback`.
 2. В `.env` (или переменных хостинга):
    ```

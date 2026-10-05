@@ -37,13 +37,22 @@ def _field_defaults(m: Module) -> dict:
     return {f["key"]: f.get("default") for f in m.fields}
 
 
+_cache: dict[tuple[int, str], dict] = {}
+
+
 def get_config(guild_id: int, key: str) -> dict:
-    """Stored config merged over schema defaults, plus the `enabled` flag."""
+    """Stored config merged over schema defaults, plus the `enabled` flag.
+    Cached in memory (event handlers call this on every event); set_config
+    invalidates, and the bot and the panel share one process."""
+    hit = _cache.get((guild_id, key))
+    if hit is not None:
+        return dict(hit)
     m = REGISTRY[key]
     stored = db.load_config(guild_id, key)
     cfg = {**_field_defaults(m), **{k: v for k, v in stored.items() if k in _field_defaults(m)}}
     cfg["enabled"] = bool(stored.get("enabled", m.default_enabled))
-    return cfg
+    _cache[(guild_id, key)] = cfg
+    return dict(cfg)
 
 
 def is_enabled(guild_id: int, key: str) -> bool:
@@ -117,6 +126,7 @@ def set_config(guild_id: int, key: str, patch: dict, *, user_id: int | None = No
     if not changed:
         return after
     db.save_config(guild_id, key, after)
+    _cache.pop((guild_id, key), None)
     db.audit(guild_id, user_id, user_name, key, "config_update", changed)
     return after
 

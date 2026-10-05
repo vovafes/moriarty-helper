@@ -8548,7 +8548,9 @@ async def voice_presence_loop_error(error: Exception):
 # ── Веб-панель + модули (см. dashboard/, core/, modules/) ──
 # Панель живёт в event loop бота и на том же $PORT, что раньше занимал health-сервер
 # (GET /health по-прежнему отвечает "OK").
-MODULE_EXTENSIONS: list[str] = []
+MODULE_EXTENSIONS: list[str] = [
+    "modules.server_logging",
+]
 
 
 async def _setup_hook():

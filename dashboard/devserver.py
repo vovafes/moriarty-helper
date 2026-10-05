@@ -27,6 +27,7 @@ from dashboard import server
 from modules import (  # noqa: F401
     server_logging, moderation, automod, anti_nuke, giveaways, automations, support_tickets,
     verification, autorole, reaction_roles, welcome,
+    levels, suggestions, polls, reminders, birthdays, starboard, sticky,
 )
 import panel_modules  # noqa: F401  (old features: tickets, shop, warns, ...)
 import legacy.state as legacy_state

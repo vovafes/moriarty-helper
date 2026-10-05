@@ -47,6 +47,13 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.autorole",
     "modules.reaction_roles",
     "modules.welcome",
+    "modules.levels",
+    "modules.suggestions",
+    "modules.polls",
+    "modules.reminders",
+    "modules.birthdays",
+    "modules.starboard",
+    "modules.sticky",
 ]
 
 

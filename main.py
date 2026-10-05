@@ -40,10 +40,20 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.moderation",
     "modules.automod",
     "modules.anti_nuke",
+    "modules.giveaways",
+    "modules.automations",
+    "modules.support_tickets",
 ]
 
 
 async def _setup_hook():
+    # Сначала модули: они регистрируют свои маршруты панели, а после старта сервера
+    # новые маршруты добавить уже нельзя.
+    for ext in MODULE_EXTENSIONS:
+        try:
+            await bot.load_extension(ext)
+        except Exception as e:
+            print(f"WARNING: модуль {ext} не загрузился: {e}")
     # Веб-панель живёт в event loop бота и на том же $PORT, что раньше занимал
     # health-сервер (GET /health по-прежнему отвечает "OK").
     try:
@@ -51,11 +61,6 @@ async def _setup_hook():
         await dashboard_server.start(bot)
     except Exception as e:  # панель не должна ронять бота
         print(f"WARNING: dashboard не запустился: {e}")
-    for ext in MODULE_EXTENSIONS:
-        try:
-            await bot.load_extension(ext)
-        except Exception as e:
-            print(f"WARNING: модуль {ext} не загрузился: {e}")
 
 
 bot.setup_hook = _setup_hook

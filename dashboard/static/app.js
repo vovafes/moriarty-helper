@@ -331,7 +331,10 @@ function tableCard(m, t) {
   };
   api(`${base()}/modules/${m.key}/tables/${t.id}`).then(rows => {
     if (!rows.length) { card.replaceChildren(head(), el("div", { class: "empty" }, "Пока пусто.")); return; }
-    body.replaceChildren(...rows.map(r => el("tr", {}, t.columns.map(c => el("td", {}, String(fmt(c, r[c.key])))))));
+    const cell = (c, r) => c.format === "link" && r[c.key]
+      ? el("td", {}, el("a", { href: r[c.key], target: "_blank", rel: "noopener" }, "Открыть"))
+      : el("td", {}, String(fmt(c, r[c.key])));
+    body.replaceChildren(...rows.map(r => el("tr", {}, t.columns.map(c => cell(c, r)))));
   }).catch(e => card.append(el("div", { class: "empty" }, e.message)));
   return card;
 }

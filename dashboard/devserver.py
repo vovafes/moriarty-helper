@@ -24,7 +24,7 @@ from core import db
 from dashboard import server
 
 # importing the modules registers their schemas (same as loading the extensions)
-from modules import server_logging, moderation, automod, anti_nuke  # noqa: F401
+from modules import server_logging, moderation, automod, anti_nuke, giveaways, automations, support_tickets  # noqa: F401
 import panel_modules  # noqa: F401  (old features: tickets, shop, warns, ...)
 import legacy.state as legacy_state
 

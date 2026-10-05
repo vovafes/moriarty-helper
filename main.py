@@ -18,6 +18,9 @@ from legacy import (  # noqa: F401
     tickets, timers, voice_rewards, vzp_monitor, warns,
 )
 
+# Старый функционал в веб-панели (регистрирует модули панели поверх legacy-состояния)
+import panel_modules  # noqa: F401
+
 # Юр-ассистент Murrieta (модуль laws_module.py)
 try:
     from laws_module import setup_laws

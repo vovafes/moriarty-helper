@@ -165,12 +165,18 @@ async function renderOverview(main) {
 
 // ── inputs ──────────────────────────────────────────────────────────────────
 
-const channelOptions = kind => state.channels.filter(c => !kind || c.kind === kind)
-  .map(c => el("option", { value: c.id }, `${c.kind === "voice" ? "🔊" : "#"} ${c.name}${c.category ? ` · ${c.category}` : ""}`));
+const channelOptions = kind => state.channels.filter(c => kind ? c.kind === kind : c.kind !== "category")
+  .map(c => el("option", { value: c.id }, `${c.kind === "voice" ? "🔊" : c.kind === "category" ? "📁" : "#"} ${c.name}${c.category ? ` · ${c.category}` : ""}`));
 const roleOptions = () => state.roles.map(r => el("option", { value: r.id }, `@${r.name}`));
 const withEmpty = opts => [el("option", { value: "" }, "— не выбрано —"), ...opts];
 
 function buildInput(f, value) {
+  const built = buildInputRaw(f, value);
+  if (f.readonly && built.el) { built.el.disabled = true; }
+  return built;
+}
+
+function buildInputRaw(f, value) {
   switch (f.type) {
     case "bool": {
       const inp = el("input", { type: "checkbox" }); inp.checked = !!value;

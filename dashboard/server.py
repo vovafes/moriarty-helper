@@ -260,9 +260,12 @@ async def api_module_table(request):
     fn = modules.TABLE_PROVIDERS.get((request.match_info["key"], request.match_info["tid"]))
     if fn is None:
         return _json_error(404, "no such table")
-    rows = fn(guild)
-    if inspect.isawaitable(rows):
-        rows = await rows
+    try:
+        rows = fn(guild)
+        if inspect.isawaitable(rows):
+            rows = await rows
+    except Exception as exc:   # a broken provider must not look like the whole panel crashed
+        return _json_error(500, f"не удалось собрать таблицу: {type(exc).__name__}: {exc}")
     return web.json_response(rows, dumps=lambda o: json.dumps(o, default=str))
 
 
@@ -297,6 +300,7 @@ async def api_channels(request):
     out = []
     for ch in sorted(guild.channels, key=lambda c: (c.position, c.id)):
         if ch.type.name == "category":
+            out.append({"id": str(ch.id), "name": ch.name, "kind": "category", "category": None})
             continue
         out.append({"id": str(ch.id), "name": ch.name, "kind": kinds.get(ch.type.name, ch.type.name),
                     "category": cats.get(getattr(ch, "category_id", None))})

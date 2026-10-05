@@ -7,17 +7,26 @@ the UI. Login is skipped: open /dev-login.
 """
 import asyncio
 import os
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 from aiohttp import web
 
+# legacy save_data()/pvp config write relative to the cwd -- keep the real data.json out of reach
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_REPO = Path(__file__).resolve().parents[1]
+os.chdir(tempfile.mkdtemp())
+sys.path.insert(0, str(_REPO))
+
 from core import db
 from dashboard import server
 
 # importing the modules registers their schemas (same as loading the extensions)
 from modules import server_logging, moderation, automod, anti_nuke  # noqa: F401
+import panel_modules  # noqa: F401  (old features: tickets, shop, warns, ...)
+import legacy.state as legacy_state
 
 GID = 424242
 
@@ -34,6 +43,10 @@ def _fake_bot():
                NS(id=8, name="Администратор", color=NS(value=0xED4245), managed=False, position=9, is_default=lambda: False),
                NS(id=9, name="Участник", color=NS(value=0x5865F2), managed=False, position=1, is_default=lambda: False)],
     )
+    people = {1001: "Алексей", 1002: "Мария", 1: "Demo Admin"}
+    guild.get_member = lambda i: NS(id=i, display_name=people[i]) if i in people else None
+    guild.get_role = lambda i: next((r for r in guild.roles if r.id == i), None)
+    guild.get_channel = lambda i: next((c for c in guild.channels if c.id == i), None)
     return NS(get_guild=lambda i: guild if i == GID else None, guilds=[guild])
 
 
@@ -48,6 +61,14 @@ async def main():
     moderation.add_case(GID, "mute", U(id=11, name="spammer#1234"), U(id=1, name="Demo Admin"), "Спам в общем чате", 3600)
     moderation.add_case(GID, "automod", U(id=12, name="linker#4321"), U(id=99, name="Moriarty"), "Приглашение на другой сервер")
     moderation.add_case(GID, "ban", U(id=13, name="raider#0001"), U(id=1, name="Demo Admin"), "Рейд")
+
+    # legacy demo data so the economy/warns/shop pages aren't empty
+    legacy_state.points_db[GID] = {1001: 1250, 1002: 480}
+    legacy_state.chips_db[GID] = {1001: 300}
+    legacy_state.guild_shop_items[GID] = {"1": {"name": "Снять варн", "price": 500, "emoji": "⚠️", "description": "Снимает один варн",
+                                                "action": "remove_warn", "role_id": None}}
+    legacy_state.warns_db[GID] = {1002: {"warns": 2, "reason": "Пропуск сбора", "moderator": 1}}
+    legacy_state.warn_roles[GID] = {1: 7, 2: 8}
 
     token = server._new_session({"user": {"id": 1, "name": "Demo Admin", "avatar": None},
                                  "guilds": {GID: {"id": str(GID), "name": "Demo Server", "permissions": "8", "owner": True}}})

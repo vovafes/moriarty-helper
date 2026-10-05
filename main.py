@@ -43,6 +43,10 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.giveaways",
     "modules.automations",
     "modules.support_tickets",
+    "modules.verification",
+    "modules.autorole",
+    "modules.reaction_roles",
+    "modules.welcome",
 ]
 
 

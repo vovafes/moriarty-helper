@@ -23,14 +23,23 @@ class Module:
     fields: list[dict] = field(default_factory=list)
     default_enabled: bool = False
     icon: str = "🧩"
+    # Optional read-only table shown under the form, e.g.
+    # {"title": "Дела", "columns": [{"key": "case_no", "label": "#"}, {"key": "ts", "label": "Когда", "format": "time"}]}
+    # Rows come from a provider registered with register_data().
+    table: dict | None = None
 
 
 REGISTRY: dict[str, Module] = {}
+DATA_PROVIDERS: dict = {}   # module key -> fn(guild_id: int) -> list[dict]   (sync, runs off-loop)
 
 
 def register(module: Module) -> Module:
     REGISTRY[module.key] = module
     return module
+
+
+def register_data(key: str, fn) -> None:
+    DATA_PROVIDERS[key] = fn
 
 
 def _field_defaults(m: Module) -> dict:
@@ -135,4 +144,4 @@ def describe(key: str) -> dict:
     m = REGISTRY[key]
     return {"key": m.key, "title": m.title, "description": m.description,
             "category": m.category, "icon": m.icon, "fields": m.fields,
-            "default_enabled": m.default_enabled}
+            "default_enabled": m.default_enabled, "table": m.table}

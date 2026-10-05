@@ -16,6 +16,7 @@ Env:
 """
 
 import asyncio
+import json
 import os
 import secrets
 import time
@@ -251,6 +252,14 @@ async def api_module_put(request):
     return web.json_response(_module_payload(guild.id, key))
 
 
+async def api_module_data(request):
+    _, guild = _guild_for(request)
+    fn = modules.DATA_PROVIDERS.get(request.match_info["key"])
+    if fn is None:
+        return _json_error(404, "this module has no data table")
+    return web.json_response(await db.run(fn, guild.id), dumps=lambda o: json.dumps(o, default=str))
+
+
 async def api_channels(request):
     _, guild = _guild_for(request)
     cats = {c.id: c.name for c in guild.categories}
@@ -310,6 +319,7 @@ def create_app(bot) -> web.Application:
     r.add_get("/api/guild/{gid}/modules", api_modules)
     r.add_get("/api/guild/{gid}/modules/{key}", api_module_get)
     r.add_put("/api/guild/{gid}/modules/{key}", api_module_put)
+    r.add_get("/api/guild/{gid}/modules/{key}/data", api_module_data)
     r.add_get("/api/guild/{gid}/channels", api_channels)
     r.add_get("/api/guild/{gid}/roles", api_roles)
     r.add_get("/api/guild/{gid}/audit", api_audit)

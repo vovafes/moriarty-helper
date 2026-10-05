@@ -102,6 +102,7 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; border-top: 0; }
 td code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-size: 12px; word-break: break-word; }
+.card-title { margin: 0 0 10px; font-size: 15px; }
 .empty { color: var(--muted); padding: 24px; text-align: center; }
 
 .toast { position: fixed; right: 20px; bottom: 20px; background: var(--panel); border: 1px solid var(--border);

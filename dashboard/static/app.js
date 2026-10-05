@@ -221,7 +221,20 @@ function renderModule(main, m) {
     fields.length
       ? el("div", { class: "card" }, fields)
       : el("div", { class: "card empty" }, "У этого модуля пока нет настроек."),
-    fields.length ? el("div", { class: "savebar" }, msg, saveBtn) : null);
+    fields.length ? el("div", { class: "savebar" }, msg, saveBtn) : null,
+    m.table ? tableCard(m) : null);
+}
+
+function tableCard(m) {
+  const body = el("tbody");
+  const card = el("div", { class: "card" }, el("h3", { class: "card-title" }, m.table.title || "Данные"),
+    el("table", {}, el("thead", {}, el("tr", {}, m.table.columns.map(c => el("th", {}, c.label)))), body));
+  api(`/api/guild/${state.guildId}/modules/${m.key}/data`).then(rows => {
+    if (!rows.length) { card.replaceChildren(el("h3", { class: "card-title" }, m.table.title || "Данные"), el("div", { class: "empty" }, "Пока пусто.")); return; }
+    const fmt = (c, v) => c.format === "time" && v ? new Date(v * 1000).toLocaleString("ru-RU") : (v ?? "—");
+    body.replaceChildren(...rows.map(r => el("tr", {}, m.table.columns.map(c => el("td", {}, String(fmt(c, r[c.key])))))));
+  }).catch(e => card.append(el("div", { class: "empty" }, e.message)));
+  return card;
 }
 
 // ── audit log ───────────────────────────────────────────────────────────────

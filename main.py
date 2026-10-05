@@ -8550,6 +8550,7 @@ async def voice_presence_loop_error(error: Exception):
 # (GET /health по-прежнему отвечает "OK").
 MODULE_EXTENSIONS: list[str] = [
     "modules.server_logging",
+    "modules.moderation",
 ]
 
 

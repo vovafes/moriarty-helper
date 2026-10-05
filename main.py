@@ -1,6 +1,4 @@
 import discord
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from discord import app_commands, ui
 from discord.ext import commands, tasks
 import os
@@ -8246,19 +8244,6 @@ async def vzp_history_cmd(interaction: discord.Interaction, количество
 
 # ══════════════════════════════════════════════════════════
 
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, *args):
-        pass  # suppress logs
-
-def _run_health_server():
-    port = int(os.getenv("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
-    server.serve_forever()
-
 # ─────────────────────────────────────────────
 # ТАЙМЕР АФК — авто-удаление по времени ЧЧ:ММ (МСК)
 # ─────────────────────────────────────────────
@@ -8560,5 +8545,24 @@ async def voice_presence_loop_error(error: Exception):
         voice_presence_loop.start()
 
 
-threading.Thread(target=_run_health_server, daemon=True).start()
+# ── Веб-панель + модули (см. dashboard/, core/, modules/) ──
+# Панель живёт в event loop бота и на том же $PORT, что раньше занимал health-сервер
+# (GET /health по-прежнему отвечает "OK").
+MODULE_EXTENSIONS: list[str] = []
+
+
+async def _setup_hook():
+    try:
+        from dashboard import server as dashboard_server
+        await dashboard_server.start(bot)
+    except Exception as e:  # панель не должна ронять бота
+        print(f"WARNING: dashboard не запустился: {e}")
+    for ext in MODULE_EXTENSIONS:
+        try:
+            await bot.load_extension(ext)
+        except Exception as e:
+            print(f"WARNING: модуль {ext} не загрузился: {e}")
+
+
+bot.setup_hook = _setup_hook
 bot.run(os.getenv("DISCORD_TOKEN"))

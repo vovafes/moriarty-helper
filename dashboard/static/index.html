@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moriarty · Панель</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <div class="logo">M</div>
+    <h1>Moriarty</h1>
+    <p>Панель управления ботом</p>
+    <a class="btn primary" href="/auth/login">Войти через Discord</a>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo sm">M</div><span>Moriarty</span></div>
+    <div class="guild-pick">
+      <select id="guildSelect"></select>
+    </div>
+    <nav id="nav"></nav>
+    <div class="user">
+      <span id="userName"></span>
+      <button class="link" id="logoutBtn">Выйти</button>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

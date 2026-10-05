@@ -54,6 +54,10 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.birthdays",
     "modules.starboard",
     "modules.sticky",
+    "modules.guards",
+    "modules.roles_extra",
+    "modules.voice_server",
+    "modules.team",
 ]
 
 

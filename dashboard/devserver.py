@@ -28,6 +28,7 @@ from modules import (  # noqa: F401
     server_logging, moderation, automod, anti_nuke, giveaways, automations, support_tickets,
     verification, autorole, reaction_roles, welcome,
     levels, suggestions, polls, reminders, birthdays, starboard, sticky,
+    guards, roles_extra, voice_server, team,
 )
 import panel_modules  # noqa: F401  (old features: tickets, shop, warns, ...)
 import legacy.state as legacy_state
@@ -47,6 +48,7 @@ def _fake_bot():
                NS(id=8, name="Администратор", color=NS(value=0xED4245), managed=False, position=9, is_default=lambda: False),
                NS(id=9, name="Участник", color=NS(value=0x5865F2), managed=False, position=1, is_default=lambda: False)],
     )
+    guild.members = []
     people = {1001: "Алексей", 1002: "Мария", 1: "Demo Admin"}
     guild.get_member = lambda i: NS(id=i, display_name=people[i]) if i in people else None
     guild.get_role = lambda i: next((r for r in guild.roles if r.id == i), None)

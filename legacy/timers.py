@@ -15,7 +15,7 @@ from legacy.state import (
 )
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # корень проекта, не legacy/
 
 
 async def send_backup_now(guild: discord.Guild) -> bool:

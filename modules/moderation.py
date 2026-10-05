@@ -58,9 +58,9 @@ modules.register(modules.Module(
 ))
 
 TYPE_LABELS = {"mute": "Мут", "unmute": "Снятие мута", "kick": "Кик", "ban": "Бан",
-               "tempban": "Временный бан", "unban": "Разбан"}
+               "tempban": "Временный бан", "unban": "Разбан", "automod": "AutoMod"}
 TYPE_COLORS = {"mute": 0xFEE75C, "unmute": 0x3BA55D, "kick": 0xE67E22, "ban": 0xED4245,
-               "tempban": 0xED4245, "unban": 0x3BA55D}
+               "tempban": 0xED4245, "unban": 0x3BA55D, "automod": 0xE67E22}
 MAX_TIMEOUT_S = 28 * 86400
 _DUR = re.compile(r"(\d+)\s*([smhdw])", re.I)
 _UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}

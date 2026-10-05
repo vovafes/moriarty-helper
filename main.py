@@ -8551,6 +8551,7 @@ async def voice_presence_loop_error(error: Exception):
 MODULE_EXTENSIONS: list[str] = [
     "modules.server_logging",
     "modules.moderation",
+    "modules.automod",
 ]
 
 

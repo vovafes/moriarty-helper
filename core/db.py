@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details   TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_guild_ts ON audit_log (guild_id, ts DESC);
+CREATE TABLE IF NOT EXISTS panel_sessions (
+    token_hash TEXT PRIMARY KEY,
+    created    INTEGER NOT NULL,
+    data       TEXT    NOT NULL
+);
 """
 
 # Modules register extra CREATE TABLE statements here before init() runs.
@@ -139,3 +144,28 @@ def audit_page(guild_id: int, limit: int = 50, before_id: int | None = None) -> 
         d["details"] = json.loads(d["details"]) if d["details"] else None
         out.append(d)
     return out
+
+
+# ── dashboard sessions (survive bot restarts; only a hash of the cookie token is stored) ──
+
+def session_save(token_hash: str, created: float, data: dict) -> None:
+    execute("INSERT OR REPLACE INTO panel_sessions (token_hash, created, data) VALUES (?,?,?)",
+            (token_hash, int(created), json.dumps(data, ensure_ascii=False)))
+
+
+def session_load(token_hash: str) -> tuple[float, dict] | None:
+    rows = query("SELECT created, data FROM panel_sessions WHERE token_hash=?", (token_hash,))
+    if not rows:
+        return None
+    try:
+        return float(rows[0]["created"]), json.loads(rows[0]["data"])
+    except json.JSONDecodeError:
+        return None
+
+
+def session_delete(token_hash: str) -> None:
+    execute("DELETE FROM panel_sessions WHERE token_hash=?", (token_hash,))
+
+
+def session_purge(older_than: float) -> None:
+    execute("DELETE FROM panel_sessions WHERE created<?", (int(older_than),))

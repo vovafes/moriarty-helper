@@ -96,6 +96,7 @@ const matches = m => !state.query || `${m.title} ${m.description} ${m.key}`.toLo
 function renderNav() {
   const items = [
     el("button", { class: state.view === "overview" ? "active" : "", onclick: () => go("overview") }, "🏠 Обзор"),
+    el("button", { class: state.view === "members" ? "active" : "", onclick: () => go("members") }, "👥 Участники"),
     el("button", { class: state.view === "audit" ? "active" : "", onclick: () => go("audit") }, "📜 Журнал действий"),
   ];
   let shown = 0;
@@ -116,6 +117,7 @@ function renderNav() {
 function renderView() {
   const main = $("#main");
   if (state.view === "overview") { $("#topTitle").textContent = "Обзор"; return renderOverview(main); }
+  if (state.view === "members") { $("#topTitle").textContent = "Участники"; return renderMembers(main); }
   if (state.view === "audit") { $("#topTitle").textContent = "Журнал действий"; return renderAudit(main); }
   const m = state.modules.find(x => `mod:${x.key}` === state.view);
   if (m) { $("#topTitle").textContent = m.title; return renderModule(main, m); }
@@ -170,23 +172,29 @@ const channelItems = kind => state.channels.filter(c => kind ? c.kind === kind :
   .map(c => ({ id: c.id, label: c.name, icon: CH_ICON[c.kind] || "#", group: c.category || "Без категории" }));
 const roleItems = () => state.roles.map(r => ({ id: r.id, label: r.name, color: r.color ? "#" + r.color.toString(16).padStart(6, "0") : null }));
 
-// Searchable dropdown. Single mode shows the chosen item, multi mode shows removable chips.
+// Pill picker (Discord-style): chosen items are rounded pills with a ×, the dropdown has search.
+// `remote(q)` (optional) fetches items from the server instead of a fixed list (members).
 // Values travel as strings: Discord IDs do not fit a JS number exactly.
-function picker({ items, multi, value, placeholder }) {
-  const byId = new Map(items.map(i => [String(i.id), i]));
+function picker({ items, multi, value, placeholder, remote }) {
+  let all = items || [];
+  const byId = new Map(all.map(i => [String(i.id), i]));
   let chosen = (multi ? (value || []) : (value ? [value] : [])).map(String);
-  for (const id of chosen) if (!byId.has(id)) byId.set(id, { id, label: `удалено · ${id}`, missing: true });
+  const known = id => byId.get(id) || { id, label: remote ? `[${id}]` : `удалено · ${id}`, missing: !remote };
   const root = el("div", { class: "picker" });
   const box = el("div", { class: "pk-box", tabindex: "0", role: "combobox" });
   const pop = el("div", { class: "pk-pop hidden" });
   const search = el("input", { type: "text", class: "pk-search", placeholder: "Поиск…", autocomplete: "off" });
-  const list = el("div", { class: "pk-list" });
+  const list = el("div", { class: `pk-list ${multi && all.some(i => i.color) ? "pills" : ""}` });
   pop.append(search, list);
   root.append(box, pop);
 
   const emit = () => root.dispatchEvent(new Event("change", { bubbles: true }));
-  const mark = i => i.color ? el("i", { class: "pk-dot", style: `background:${i.color}` }) : (i.icon ? el("span", { class: "pk-ic" }, i.icon) : null);
-  const open = () => { pop.classList.remove("hidden"); search.value = ""; drawList(); search.focus(); };
+  const mark = i => i.avatar ? el("img", { class: "pk-av", src: i.avatar, alt: "" })
+    : i.color ? el("i", { class: "pk-dot", style: `background:${i.color}` }) : (i.icon ? el("span", { class: "pk-ic" }, i.icon) : null);
+  const tint = i => i.color ? `--c:${i.color}` : "";
+  const remember = rows => { for (const i of rows) byId.set(String(i.id), i); };
+  const load = async q => { if (remote) { try { all = await remote(q); remember(all); } catch { all = []; } } };
+  const open = async () => { pop.classList.remove("hidden"); search.value = ""; await load(""); drawList(); search.focus(); };
   const close = () => pop.classList.add("hidden");
   const toggle = id => {
     if (multi) chosen = chosen.includes(id) ? chosen.filter(x => x !== id) : [...chosen, id];
@@ -196,8 +204,9 @@ function picker({ items, multi, value, placeholder }) {
 
   function drawBox() {
     const chips = chosen.map(id => {
-      const i = byId.get(id);
-      return el("span", { class: `pk-chip ${i.missing ? "missing" : ""}` }, mark(i), i.label,
+      const i = known(id);
+      return el("span", { class: `pk-chip ${i.color ? "role" : ""} ${i.missing ? "missing" : ""}`, style: tint(i) }, mark(i),
+        el("span", { class: "pk-label" }, (i.color ? "" : i.icon === "#" ? "#" : "") + i.label),
         el("button", { type: "button", class: "pk-x", title: "Убрать", onclick: e => { e.stopPropagation(); toggle(id); } }, "×"));
     });
     box.replaceChildren(...(chips.length ? chips : [el("span", { class: "pk-ph" }, placeholder || "— не выбрано —")]),
@@ -207,26 +216,38 @@ function picker({ items, multi, value, placeholder }) {
     const q = search.value.trim().toLowerCase();
     const rows = [];
     let group = null;
-    for (const i of items) {
-      if (q && !`${i.label} ${i.group || ""}`.toLowerCase().includes(q)) continue;
+    for (const i of all) {
+      if (!remote && q && !`${i.label} ${i.group || ""}`.toLowerCase().includes(q)) continue;
       if (i.group && i.group !== group) { group = i.group; rows.push(el("div", { class: "pk-group" }, group)); }
       const on = chosen.includes(String(i.id));
-      rows.push(el("div", { class: `pk-item ${on ? "on" : ""}`, onclick: () => toggle(String(i.id)) },
-        el("span", { class: "pk-tick" }, on ? "✓" : ""), mark(i), el("span", { class: "pk-name" }, i.label)));
+      rows.push(list.classList.contains("pills")
+        ? el("span", { class: `pk-chip role pick ${on ? "on" : ""}`, style: tint(i), onclick: () => toggle(String(i.id)) }, mark(i), el("span", { class: "pk-label" }, i.label), on ? el("b", {}, "✓") : null)
+        : el("div", { class: `pk-item ${on ? "on" : ""}`, onclick: () => toggle(String(i.id)) },
+            el("span", { class: "pk-tick" }, on ? "✓" : ""), mark(i), el("span", { class: "pk-name" }, i.label),
+            i.sub ? el("span", { class: "pk-sub" }, i.sub) : null));
     }
     list.replaceChildren(...(rows.length ? rows : [el("div", { class: "pk-none" }, "Ничего не найдено")]));
   }
+  let timer;
   box.addEventListener("click", () => pop.classList.contains("hidden") ? open() : close());
   box.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
-  search.addEventListener("input", drawList);
+  search.addEventListener("input", () => {
+    if (!remote) return drawList();
+    clearTimeout(timer);
+    timer = setTimeout(async () => { await load(search.value.trim()); drawList(); }, 200);
+  });
   search.addEventListener("keydown", e => {
     if (e.key === "Escape") { close(); box.focus(); }
-    if (e.key === "Enter") { e.preventDefault(); const first = list.querySelector(".pk-item"); if (first) first.click(); }
+    if (e.key === "Enter") { e.preventDefault(); const first = list.querySelector(".pk-item, .pk-chip"); if (first) first.click(); }
   });
   root._close = close;
   drawBox();
+  // remote items only know names once fetched: resolve the saved ones
+  if (remote) for (const id of chosen) if (!byId.has(id)) remote(id).then(r => { remember(r); drawBox(); }).catch(() => {});
   return { node: root, read: () => multi ? chosen.slice() : (chosen[0] || null), el: root };
 }
+const memberRemote = q => api(`${base()}/members?q=${encodeURIComponent(q)}`).then(rows =>
+  rows.map(m => ({ id: m.id, label: m.name, sub: m.username !== m.name ? m.username : "", avatar: m.avatar })));
 document.addEventListener("click", e => {
   for (const p of document.querySelectorAll(".picker")) if (!p.contains(e.target)) p._close();
 });
@@ -269,8 +290,8 @@ function buildInputRaw(f, value) {
       return picker({ items: f.type === "channels" ? channelItems(f.kind) : roleItems(), multi: true, value,
         placeholder: f.type === "channels" ? "Выберите каналы…" : "Выберите роли…" });
     case "user": {
-      const inp = el("input", { type: "text", placeholder: "ID пользователя", value: value ?? "" });
-      return { node: inp, read: () => inp.value.trim(), el: inp };
+      const p = picker({ multi: false, value: value ? String(value) : null, placeholder: "— выберите участника —", remote: memberRemote });
+      return { ...p, read: () => p.read() || "" };
     }
     default: {
       const inp = el("input", { type: "text", value: value ?? "" }); return { node: inp, read: () => inp.value, el: inp };
@@ -395,6 +416,50 @@ function tableCard(m, t) {
     body.replaceChildren(...rows.map(r => el("tr", {}, t.columns.map(c => cell(c, r)))));
   }).catch(e => card.append(el("div", { class: "empty" }, e.message)));
   return card;
+}
+
+// ── members ─────────────────────────────────────────────────────────────────
+
+function renderMembers(main) {
+  const input = el("input", { type: "search", class: "search big", placeholder: "Найти участника по имени, нику или ID…", autocomplete: "off" });
+  const results = el("div", { class: "member-results" });
+  const profile = el("div", { class: "profile" });
+  let timer, seq = 0;
+
+  async function find(q) {
+    const my = ++seq;
+    let rows;
+    try { rows = await api(`${base()}/members?q=${encodeURIComponent(q)}`); } catch (e) { return; }
+    if (my !== seq) return;
+    results.replaceChildren(...(rows.length ? rows.map(m =>
+      el("button", { class: "member-card", onclick: () => show(m.id) },
+        el("img", { src: m.avatar, alt: "" }), el("span", {}, el("b", {}, m.name), el("small", {}, m.bot ? "бот" : `@${m.username}`))))
+      : [el("div", { class: "empty" }, "Никого не нашлось")]));
+  }
+  async function show(id) {
+    profile.replaceChildren(el("div", { class: "empty" }, "Загрузка…"));
+    let p;
+    try { p = await api(`${base()}/members/${id}`); } catch (e) { profile.replaceChildren(el("div", { class: "empty" }, e.message)); return; }
+    const fmt = ts => ts ? new Date(ts * 1000).toLocaleDateString("ru-RU") : "—";
+    const roleColor = c => c ? "#" + c.toString(16).padStart(6, "0") : null;
+    profile.replaceChildren(
+      el("div", { class: "card profile-head" },
+        el("img", { src: p.avatar, alt: "" }),
+        el("div", {}, el("h3", {}, p.name), el("p", { class: "sub" }, `@${p.username} · ID ${p.id}`),
+          el("p", { class: "sub" }, `На сервере с ${fmt(p.joined)} · аккаунт создан ${fmt(p.created)}`))),
+      p.roles.length ? el("div", { class: "card" }, el("h3", { class: "group-title" }, "Роли"),
+        el("div", { class: "pills-row" }, p.roles.map(r => el("span", { class: "pk-chip role", style: `--c:${roleColor(r.color) || "#99aab5"}` },
+          el("i", { class: "pk-dot", style: `background:${roleColor(r.color) || "#99aab5"}` }), el("span", { class: "pk-label" }, r.name))))) : null,
+      el("div", { class: "sections" }, p.sections.map(sec => el("div", { class: "card" },
+        el("h3", { class: "group-title" }, `${sec.icon} ${sec.title}`),
+        el("div", { class: "kv" }, sec.items.map(i => el("div", { class: "kv-item" },
+          el("span", { class: "kv-l" }, i.label), el("b", { class: "kv-v" }, i.value), i.hint ? el("small", {}, i.hint) : null)))))));
+  }
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => find(input.value.trim()), 200); });
+  main.replaceChildren(
+    el("div", { class: "head" }, el("div", {}, el("h2", {}, "👥 Участники"), el("p", { class: "sub" }, "Баланс, минуты в войсе, варны, уровень и прочее по каждому участнику"))),
+    input, results, profile);
+  find("");
 }
 
 // ── audit log ───────────────────────────────────────────────────────────────

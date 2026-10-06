@@ -122,6 +122,11 @@ async def _vp_apply(guild, enabled):
 def _vp_save(gid, cfg):
     if cfg["enabled"] and not cfg["channel"]:
         raise modules.ValidationError("Сначала выберите голосовой канал")
+    guild = bot.get_guild(gid)
+    if cfg["channel"] and guild is not None:
+        ch = guild.get_channel(cfg["channel"])
+        if not isinstance(ch, discord.VoiceChannel):
+            raise modules.ValidationError("Выбранный канал не найден или не является голосовым")
     prev = voice_presence_settings.get(gid, {})
     voice_presence_settings[gid] = {"channel_id": cfg["channel"], "enabled": bool(cfg["enabled"])}
     save_data()

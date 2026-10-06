@@ -17,6 +17,7 @@ Env:
 """
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -74,19 +75,38 @@ def _json_error(status: int, message: str) -> web.Response:
 
 # ── sessions ────────────────────────────────────────────────────────────────
 
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _new_session(data: dict) -> str:
     token = secrets.token_urlsafe(32)
-    sessions[token] = {**data, "created": time.time()}
+    now = time.time()
+    sessions[token] = {**data, "created": now}
+    db.session_save(_hash(token), now, data)     # so a bot restart doesn't log everyone out
     return token
 
 
+def _drop_session(token: str) -> None:
+    sessions.pop(token, None)
+    if token:
+        db.session_delete(_hash(token))
+
+
 def _session(request: web.Request) -> dict | None:
-    token = request.cookies.get(COOKIE)
-    s = sessions.get(token or "")
+    token = request.cookies.get(COOKIE) or ""
+    s = sessions.get(token)
+    if s is None and token:
+        stored = db.session_load(_hash(token))
+        if stored:
+            created, data = stored
+            # JSON turned the int guild ids into strings
+            data["guilds"] = {int(k): v for k, v in data.get("guilds", {}).items()}
+            s = sessions[token] = {**data, "created": created}
     if not s:
         return None
     if time.time() - s["created"] > SESSION_TTL:
-        sessions.pop(token, None)
+        _drop_session(token)
         return None
     return s
 
@@ -178,7 +198,8 @@ async def auth_callback(request):
             or not secrets.compare_digest(request.cookies.get(STATE_COOKIE, ""), state or "-")):
         return web.Response(status=400, text="Неверный state или code, попробуй войти заново.")
     for tok in [t for t, s in sessions.items() if time.time() - s["created"] > SESSION_TTL]:
-        sessions.pop(tok, None)
+        _drop_session(tok)
+    db.session_purge(time.time() - SESSION_TTL)
     async with aiohttp.ClientSession() as http:
         async with http.post(f"{DISCORD_API}/oauth2/token", data={
             "client_id": os.getenv("DISCORD_CLIENT_ID"), "client_secret": os.getenv("DISCORD_CLIENT_SECRET"),
@@ -207,7 +228,7 @@ async def auth_callback(request):
 
 async def auth_logout(request):
     _check_origin(request)
-    sessions.pop(request.cookies.get(COOKIE) or "", None)
+    _drop_session(request.cookies.get(COOKIE) or "")
     resp = web.json_response({"ok": True})
     resp.del_cookie(COOKIE)
     return resp
@@ -366,6 +387,28 @@ async def api_roles(request):
     return web.json_response(out)
 
 
+async def api_members(request):
+    from dashboard import profile
+    _, guild = _guild_for(request)
+    return web.json_response(profile.search(guild, request.query.get("q", "")))
+
+
+async def api_member(request):
+    from dashboard import profile
+    _, guild = _guild_for(request)
+    try:
+        uid = int(request.match_info["uid"])
+    except ValueError:
+        return _json_error(400, "bad user id")
+    member = guild.get_member(uid)
+    if member is None:
+        try:
+            member = await guild.fetch_member(uid)
+        except Exception:
+            return _json_error(404, "участник не найден на сервере")
+    return web.json_response(profile.build(guild, member))
+
+
 async def api_audit(request):
     _, guild = _guild_for(request)
     before = request.query.get("before")
@@ -426,6 +469,8 @@ def create_app(bot) -> web.Application:
     r.add_get("/api/guild/{gid}/channels", api_channels)
     r.add_get("/api/guild/{gid}/roles", api_roles)
     r.add_get("/api/guild/{gid}/audit", api_audit)
+    r.add_get("/api/guild/{gid}/members", api_members)
+    r.add_get("/api/guild/{gid}/members/{uid}", api_member)
     for hook in _route_hooks:
         hook(app)
     r.add_get("/", _index)

@@ -156,9 +156,18 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14
 .pk-box:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); border-color: var(--accent); }
 .pk-caret { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
 .pk-ph { color: var(--muted); padding-left: 2px; }
-.pk-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 4px 2px 8px; border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 22%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
-.pk-chip.missing { background: color-mix(in srgb, var(--danger) 18%, transparent); border-color: var(--danger); }
+.pk-chip { --c: var(--accent); display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 6px 3px 10px;
+  border-radius: 999px; font-size: 13px; line-height: 20px;
+  background: color-mix(in srgb, var(--c) 16%, var(--panel)); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); }
+.pk-chip .pk-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-chip.missing { --c: var(--danger); }
+.pk-chip.pick { cursor: pointer; padding-right: 10px; opacity: .85; }
+.pk-chip.pick:hover { opacity: 1; }
+.pk-chip.pick.on { opacity: 1; background: color-mix(in srgb, var(--c) 34%, var(--panel)); border-color: var(--c); }
+.pk-chip.pick b { font-size: 12px; }
+.pk-av { width: 20px; height: 20px; border-radius: 50%; flex: none; margin-left: -4px; }
+.pk-sub { margin-left: auto; color: var(--muted); font-size: 12px; }
+.pk-list.pills { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; }
 .pk-x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; border-radius: 4px; }
 .pk-x:hover { color: var(--danger); }
 .pk-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
@@ -175,3 +184,28 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14
 .pk-tick { width: 14px; color: var(--accent); font-weight: 700; flex: none; }
 .pk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pk-none { padding: 14px; text-align: center; color: var(--muted); }
+
+/* ── members page ────────────────────────────────────────────────────────── */
+.search.big { padding: 10px 14px; font-size: 15px; margin-bottom: 12px; }
+.member-results { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-bottom: 18px;
+  max-height: 232px; overflow-y: auto; }
+.member-card { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.member-card:hover { border-color: var(--accent); }
+.member-card img { width: 32px; height: 32px; border-radius: 50%; flex: none; }
+.member-card span { display: flex; flex-direction: column; min-width: 0; }
+.member-card b, .member-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-card small { color: var(--muted); }
+.profile-head { display: flex; gap: 16px; align-items: center; }
+.profile-head img { width: 72px; height: 72px; border-radius: 50%; }
+.profile-head h3 { margin: 0; font-size: 20px; }
+.profile-head .sub { margin: 2px 0 0; }
+.pills-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.sections { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.sections .card { margin-bottom: 0; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.kv-item { display: flex; flex-direction: column; min-width: 0; }
+.kv-l { color: var(--muted); font-size: 12px; }
+.kv-v { font-size: 18px; overflow-wrap: anywhere; }
+.kv-item small { color: var(--muted); }
+@media (max-width: 760px) { .sections { grid-template-columns: 1fr; } .profile-head { flex-direction: column; text-align: center; } }

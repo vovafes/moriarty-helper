@@ -165,14 +165,75 @@ async function renderOverview(main) {
 
 // ── inputs ──────────────────────────────────────────────────────────────────
 
-const channelOptions = kind => state.channels.filter(c => kind ? c.kind === kind : c.kind !== "category")
-  .map(c => el("option", { value: c.id }, `${c.kind === "voice" ? "🔊" : c.kind === "category" ? "📁" : "#"} ${c.name}${c.category ? ` · ${c.category}` : ""}`));
-const roleOptions = () => state.roles.map(r => el("option", { value: r.id }, `@${r.name}`));
-const withEmpty = opts => [el("option", { value: "" }, "— не выбрано —"), ...opts];
+const CH_ICON = { voice: "🔊", category: "📁", forum: "💬", text: "#" };
+const channelItems = kind => state.channels.filter(c => kind ? c.kind === kind : c.kind !== "category")
+  .map(c => ({ id: c.id, label: c.name, icon: CH_ICON[c.kind] || "#", group: c.category || "Без категории" }));
+const roleItems = () => state.roles.map(r => ({ id: r.id, label: r.name, color: r.color ? "#" + r.color.toString(16).padStart(6, "0") : null }));
+
+// Searchable dropdown. Single mode shows the chosen item, multi mode shows removable chips.
+// Values travel as strings: Discord IDs do not fit a JS number exactly.
+function picker({ items, multi, value, placeholder }) {
+  const byId = new Map(items.map(i => [String(i.id), i]));
+  let chosen = (multi ? (value || []) : (value ? [value] : [])).map(String);
+  for (const id of chosen) if (!byId.has(id)) byId.set(id, { id, label: `удалено · ${id}`, missing: true });
+  const root = el("div", { class: "picker" });
+  const box = el("div", { class: "pk-box", tabindex: "0", role: "combobox" });
+  const pop = el("div", { class: "pk-pop hidden" });
+  const search = el("input", { type: "text", class: "pk-search", placeholder: "Поиск…", autocomplete: "off" });
+  const list = el("div", { class: "pk-list" });
+  pop.append(search, list);
+  root.append(box, pop);
+
+  const emit = () => root.dispatchEvent(new Event("change", { bubbles: true }));
+  const mark = i => i.color ? el("i", { class: "pk-dot", style: `background:${i.color}` }) : (i.icon ? el("span", { class: "pk-ic" }, i.icon) : null);
+  const open = () => { pop.classList.remove("hidden"); search.value = ""; drawList(); search.focus(); };
+  const close = () => pop.classList.add("hidden");
+  const toggle = id => {
+    if (multi) chosen = chosen.includes(id) ? chosen.filter(x => x !== id) : [...chosen, id];
+    else { chosen = chosen[0] === id ? [] : [id]; close(); }
+    drawBox(); drawList(); emit();
+  };
+
+  function drawBox() {
+    const chips = chosen.map(id => {
+      const i = byId.get(id);
+      return el("span", { class: `pk-chip ${i.missing ? "missing" : ""}` }, mark(i), i.label,
+        el("button", { type: "button", class: "pk-x", title: "Убрать", onclick: e => { e.stopPropagation(); toggle(id); } }, "×"));
+    });
+    box.replaceChildren(...(chips.length ? chips : [el("span", { class: "pk-ph" }, placeholder || "— не выбрано —")]),
+      el("span", { class: "pk-caret" }, "▾"));
+  }
+  function drawList() {
+    const q = search.value.trim().toLowerCase();
+    const rows = [];
+    let group = null;
+    for (const i of items) {
+      if (q && !`${i.label} ${i.group || ""}`.toLowerCase().includes(q)) continue;
+      if (i.group && i.group !== group) { group = i.group; rows.push(el("div", { class: "pk-group" }, group)); }
+      const on = chosen.includes(String(i.id));
+      rows.push(el("div", { class: `pk-item ${on ? "on" : ""}`, onclick: () => toggle(String(i.id)) },
+        el("span", { class: "pk-tick" }, on ? "✓" : ""), mark(i), el("span", { class: "pk-name" }, i.label)));
+    }
+    list.replaceChildren(...(rows.length ? rows : [el("div", { class: "pk-none" }, "Ничего не найдено")]));
+  }
+  box.addEventListener("click", () => pop.classList.contains("hidden") ? open() : close());
+  box.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  search.addEventListener("input", drawList);
+  search.addEventListener("keydown", e => {
+    if (e.key === "Escape") { close(); box.focus(); }
+    if (e.key === "Enter") { e.preventDefault(); const first = list.querySelector(".pk-item"); if (first) first.click(); }
+  });
+  root._close = close;
+  drawBox();
+  return { node: root, read: () => multi ? chosen.slice() : (chosen[0] || null), el: root };
+}
+document.addEventListener("click", e => {
+  for (const p of document.querySelectorAll(".picker")) if (!p.contains(e.target)) p._close();
+});
 
 function buildInput(f, value) {
   const built = buildInputRaw(f, value);
-  if (f.readonly && built.el) { built.el.disabled = true; }
+  if (f.readonly && built.el) { built.el.disabled = true; built.el.style.pointerEvents = "none"; built.el.style.opacity = ".6"; }
   return built;
 }
 
@@ -201,16 +262,12 @@ function buildInputRaw(f, value) {
       const box = el("div", { class: "checks" }, boxes);
       return { node: box, read: () => [...box.querySelectorAll("input:checked")].map(c => c.dataset.v), el: box };
     }
-    case "channel": case "role": {
-      const inp = el("select", {}, withEmpty(f.type === "channel" ? channelOptions(f.kind) : roleOptions()));
-      inp.value = value ? String(value) : ""; return { node: inp, read: () => (inp.value ? Number(inp.value) : null), el: inp };
-    }
-    case "channels": case "roles": {
-      const inp = el("select", { multiple: true }, f.type === "channels" ? channelOptions(f.kind) : roleOptions());
-      const chosen = new Set((value || []).map(String));
-      for (const o of inp.options) o.selected = chosen.has(o.value);
-      return { node: inp, read: () => [...inp.selectedOptions].map(o => Number(o.value)), el: inp };
-    }
+    case "channel": case "role":
+      return picker({ items: f.type === "channel" ? channelItems(f.kind) : roleItems(), multi: false, value,
+        placeholder: f.type === "channel" ? "— канал не выбран —" : "— роль не выбрана —" });
+    case "channels": case "roles":
+      return picker({ items: f.type === "channels" ? channelItems(f.kind) : roleItems(), multi: true, value,
+        placeholder: f.type === "channels" ? "Выберите каналы…" : "Выберите роли…" });
     case "user": {
       const inp = el("input", { type: "text", placeholder: "ID пользователя", value: value ?? "" });
       return { node: inp, read: () => inp.value.trim(), el: inp };
@@ -221,7 +278,8 @@ function buildInputRaw(f, value) {
   }
 }
 
-const fieldRow = (f, inp) => el("div", { class: "field" },
+const WIDE = new Set(["longtext", "multiselect", "channels", "roles"]);
+const fieldRow = (f, inp) => el("div", { class: `field ${WIDE.has(f.type) ? "wide" : ""} ${f.type === "bool" ? "inline" : ""}` },
   el("label", {}, f.label, f.help ? el("span", { class: "help" }, f.help) : null), inp.node);
 
 // ── module page ─────────────────────────────────────────────────────────────
@@ -278,7 +336,7 @@ function renderModule(main, m) {
       el("div", {}, el("h2", {}, `${m.icon} ${m.title}`), el("p", { class: "sub" }, m.description)),
       enabledInput ? enabledInput.node : null),
     ...cards.map(c => el("div", { class: "card" }, el("h3", { class: "group-title" }, c.title),
-      c.help ? el("p", { class: "group-help" }, c.help) : null, ...c.rows)),
+      c.help ? el("p", { class: "group-help" }, c.help) : null, el("div", { class: "fields" }, c.rows))),
     !cards.length ? el("div", { class: "card empty" }, "У этого модуля нет настроек.") : null,
     cards.length ? el("div", { class: "savebar" }, msg, resetBtn, saveBtn) : null,
     m.actions.length ? actionsCard(m) : null,
@@ -346,10 +404,32 @@ async function renderAudit(main) {
   const rows = await api(`${base()}/audit`);
   const modTitle = k => state.modules.find(m => m.key === k)?.title || k || "—";
   const fmt = ts => new Date(ts * 1000).toLocaleString("ru-RU");
+  const nameOf = (list, id) => { const x = list.find(i => String(i.id) === String(id)); return x ? x.name : `удалено · ${id}`; };
+  const fmtVal = (f, v) => {
+    if (v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length)) return "—";
+    switch (f && f.type) {
+      case "channel": return "#" + nameOf(state.channels, v);
+      case "role": return "@" + nameOf(state.roles, v);
+      case "channels": return v.map(x => "#" + nameOf(state.channels, x)).join(", ");
+      case "roles": return v.map(x => "@" + nameOf(state.roles, x)).join(", ");
+      case "bool": return v ? "вкл" : "выкл";
+    }
+    if (typeof v === "boolean") return v ? "вкл" : "выкл";
+    if (Array.isArray(v)) return v.join(", ");
+    if (typeof v === "object") return JSON.stringify(v);
+    const s = String(v);
+    return s.length > 80 ? s.slice(0, 80) + "…" : s;
+  };
   const summary = r => {
-    if (!r.details) return r.action;
-    return Object.entries(r.details).map(([k, v]) =>
-      v && typeof v === "object" && "to" in v ? `${k}: ${JSON.stringify(v.from)} → ${JSON.stringify(v.to)}` : `${k}: ${JSON.stringify(v)}`).join("; ");
+    if (!r.details) return r.action === "config_update" ? "" : r.action.replace(/^action:/, "");
+    const mod = state.modules.find(m => m.key === r.module);
+    return Object.entries(r.details).map(([k, v]) => {
+      const f = mod && mod.fields.find(x => x.key === k);
+      const label = k === "enabled" ? "модуль" : (f ? f.label : k);
+      return v && typeof v === "object" && !Array.isArray(v) && "to" in v
+        ? (k === "enabled" ? `${label}: ${v.to ? "включён" : "выключен"}` : `${label}: ${fmtVal(f, v.from)} → ${fmtVal(f, v.to)}`)
+        : `${label}: ${fmtVal(f, v)}`;
+    }).join("; ");
   };
   main.replaceChildren(
     el("div", { class: "head" }, el("div", {}, el("h2", {}, "📜 Журнал действий"), el("p", { class: "sub" }, "Кто и что менял в панели"))),

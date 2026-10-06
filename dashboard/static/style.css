@@ -71,14 +71,17 @@ main .sub { color: var(--muted); margin: 0 0 22px; }
 .pill { margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); }
 .pill.on { background: color-mix(in srgb, var(--ok) 22%, transparent); color: var(--ok); }
 
-.field { display: grid; grid-template-columns: 240px 1fr; gap: 6px 20px; padding: 12px 0; border-top: 1px solid var(--border); }
-.field:first-child { border-top: 0; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 8px 12px; background: var(--panel2); border-radius: 8px; align-self: start; }
 .field label { font-weight: 600; }
-.field .help { grid-column: 1; color: var(--muted); font-size: 12px; font-weight: 400; display: block; margin-top: 2px; }
+.field .help { color: var(--muted); font-size: 12px; font-weight: 400; display: block; margin-top: 1px; }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
-  .field { grid-template-columns: 1fr; }
+  .fields { grid-template-columns: 1fr; }
 }
 input[type=text], input[type=number], textarea, select {
   width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
@@ -144,3 +147,31 @@ dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14
 .tbl-scroll { overflow-x: auto; }
 .search-empty { color: var(--muted); padding: 8px 10px; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel2); color: var(--muted); }
+
+/* ── channel / role pickers ──────────────────────────────────────────────── */
+.picker { position: relative; }
+.pk-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 38px; padding: 5px 30px 5px 8px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; position: relative; }
+.pk-box:hover { border-color: var(--muted); }
+.pk-box:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); border-color: var(--accent); }
+.pk-caret { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.pk-ph { color: var(--muted); padding-left: 2px; }
+.pk-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 4px 2px 8px; border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.pk-chip.missing { background: color-mix(in srgb, var(--danger) 18%, transparent); border-color: var(--danger); }
+.pk-x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; border-radius: 4px; }
+.pk-x:hover { color: var(--danger); }
+.pk-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--muted); }
+.pk-ic { color: var(--muted); width: 16px; text-align: center; flex: none; }
+.pk-pop { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 32px rgba(0,0,0,.4); overflow: hidden; }
+.pk-search { border: 0 !important; border-bottom: 1px solid var(--border) !important; border-radius: 0 !important; background: var(--panel) !important; }
+.pk-search:focus { outline: none !important; }
+.pk-list { max-height: 260px; overflow-y: auto; padding: 4px; }
+.pk-group { padding: 8px 8px 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.pk-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.pk-item:hover { background: var(--panel2); }
+.pk-item.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pk-tick { width: 14px; color: var(--accent); font-weight: 700; flex: none; }
+.pk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-none { padding: 14px; text-align: center; color: var(--muted); }

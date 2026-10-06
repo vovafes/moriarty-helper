@@ -251,8 +251,25 @@ async def api_overview(request):
     })
 
 
+_JS_SAFE_INT = 2 ** 53
+
+
+def _safe_ids(obj):
+    """Discord snowflakes (~1e18) exceed what JS numbers hold exactly, so the browser
+    would silently corrupt them. Send every such integer as a string instead."""
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, int):
+        return str(obj) if abs(obj) >= _JS_SAFE_INT else obj
+    if isinstance(obj, dict):
+        return {k: _safe_ids(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe_ids(v) for v in obj]
+    return obj
+
+
 def _module_payload(guild_id: int, key: str) -> dict:
-    return {**modules.describe(key), "config": modules.get_config(guild_id, key)}
+    return _safe_ids({**modules.describe(key), "config": modules.get_config(guild_id, key)})
 
 
 async def api_modules(request):
@@ -301,7 +318,7 @@ async def api_module_table(request):
             rows = await rows
     except Exception as exc:   # a broken provider must not look like the whole panel crashed
         return _json_error(500, f"не удалось собрать таблицу: {type(exc).__name__}: {exc}")
-    return web.json_response(rows, dumps=lambda o: json.dumps(o, default=str))
+    return web.json_response(_safe_ids(rows), dumps=lambda o: json.dumps(o, default=str))
 
 
 async def api_module_action(request):
@@ -356,7 +373,7 @@ async def api_audit(request):
     for r in rows:
         r["user_id"] = str(r["user_id"]) if r["user_id"] else None
         r["guild_id"] = str(r["guild_id"])
-    return web.json_response(rows)
+    return web.json_response(_safe_ids(rows))
 
 
 # ── app ─────────────────────────────────────────────────────────────────────

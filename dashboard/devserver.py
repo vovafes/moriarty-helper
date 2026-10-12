@@ -28,7 +28,7 @@ from modules import (  # noqa: F401
     server_logging, moderation, automod, anti_nuke, giveaways, automations, support_tickets,
     verification, autorole, reaction_roles, welcome,
     levels, suggestions, polls, reminders, birthdays, starboard, sticky,
-    guards, roles_extra, voice_server, team,
+    guards, roles_extra, voice_server, team, server_tools, community_tools, support_team,
 )
 import panel_modules  # noqa: F401  (old features: tickets, shop, warns, ...)
 import legacy.state as legacy_state
@@ -39,7 +39,7 @@ GID = 424242
 def _fake_bot():
     ch = lambda i, n, t, cat: NS(id=i, name=n, type=NS(name=t), position=i, category_id=cat)
     guild = NS(
-        id=GID, name="Demo Server", member_count=128, icon=None,
+        id=GID, name="Demo Server", member_count=128, icon=None, owner_id=1,
         categories=[NS(id=900, name="Основное"), NS(id=901, name="Администрация")],
         channels=[ch(1, "общий", "text", 900), ch(2, "новости", "text", 900), ch(3, "логи", "text", 901),
                   ch(4, "модерация", "text", 901), ch(5, "Голосовой 1", "voice", 900), ch(6, "Голосовой 2", "voice", 900)],

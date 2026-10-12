@@ -272,6 +272,45 @@ async def api_overview(request):
     })
 
 
+async def api_analytics(request):
+    """Panel activity from the audit log: per day, per hour of day (MSK), top modules, enabled modules by category."""
+    _, guild = _guild_for(request)
+    try:
+        days = max(1, min(90, int(request.query.get("days", "30"))))
+    except ValueError:
+        days = 30
+    now = int(time.time())
+    since = now - days * 86400
+    rows = await db.run(db.query, "SELECT ts, module FROM audit_log WHERE guild_id=? AND ts>=?", (guild.id, since))
+    msk = 3 * 3600
+    per_day: dict[str, int] = {}
+    for i in range(days - 1, -1, -1):
+        per_day[time.strftime("%d.%m", time.gmtime(now - i * 86400 + msk))] = 0
+    per_hour = [0] * 24
+    by_module: dict[str, int] = {}
+    for r in rows:
+        key = time.strftime("%d.%m", time.gmtime(r["ts"] + msk))
+        if key in per_day:
+            per_day[key] += 1
+        per_hour[int((r["ts"] + msk) // 3600 % 24)] += 1
+        if r["module"]:
+            by_module[r["module"]] = by_module.get(r["module"], 0) + 1
+    cats: dict[str, list[int]] = {}
+    enabled = 0
+    for key, m in modules.REGISTRY.items():
+        on = modules.get_config(guild.id, key)["enabled"]
+        enabled += bool(on)
+        c = cats.setdefault(m.category, [0, 0])
+        c[0] += bool(on)
+        c[1] += 1
+    return web.json_response({
+        "days": days, "total": len(rows), "enabled": enabled, "total_modules": len(modules.REGISTRY),
+        "per_day": [{"day": d, "n": n} for d, n in per_day.items()], "per_hour": per_hour,
+        "top_modules": [{"module": k, "n": n} for k, n in sorted(by_module.items(), key=lambda kv: -kv[1])[:8]],
+        "categories": [{"category": c, "enabled": v[0], "total": v[1]} for c, v in cats.items()],
+    })
+
+
 _JS_SAFE_INT = 2 ** 53
 
 
@@ -469,6 +508,7 @@ def create_app(bot) -> web.Application:
     r.add_get("/api/guild/{gid}/channels", api_channels)
     r.add_get("/api/guild/{gid}/roles", api_roles)
     r.add_get("/api/guild/{gid}/audit", api_audit)
+    r.add_get("/api/guild/{gid}/analytics", api_analytics)
     r.add_get("/api/guild/{gid}/members", api_members)
     r.add_get("/api/guild/{gid}/members/{uid}", api_member)
     for hook in _route_hooks:

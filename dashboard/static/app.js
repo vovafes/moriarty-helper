@@ -5,7 +5,36 @@ const CATEGORY_TITLES = {
   economy: "Экономика", family: "Семья", tools: "Инструменты", system: "Система",
 };
 
+// Lucide-style inline icons (no emoji as UI icons)
+const ICONS = {
+  home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  chart: '<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>',
+  message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  headset: '<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>',
+  wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z"/>',
+  coins: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/>',
+  flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>',
+  cog: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
+  rotate: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+};
+const CAT_ICON = { moderation: "shield", community: "message", support: "headset", team: "users", economy: "coins", family: "flag", tools: "wrench", system: "cog" };
+function icon(name, cls = "") {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", `ic ${cls}`); s.setAttribute("aria-hidden", "true");
+  s.innerHTML = ICONS[name] || ICONS.cog;   // static strings from ICONS only
+  return s;
+}
+const modIcon = (m, cls) => icon(CAT_ICON[m.category] || "cog", cls);
+
 const state = { me: null, guildId: null, modules: [], channels: [], roles: [], view: "overview", query: "" };
+// replaceChildren() would print "null" for absent optional blocks
+const put = (node, ...kids) => node.replaceChildren(...kids.flat().filter(k => k !== null && k !== undefined && k !== false));
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -49,6 +78,7 @@ async function init() {
   $("#app").classList.remove("hidden");
   $("#userName").textContent = state.me.user.name;
   $("#logoutBtn").onclick = async () => { await api("/auth/logout", { method: "POST" }).catch(() => {}); location.reload(); };
+  $("#menuIcon").replaceChildren(icon("menu"));
   $("#menuBtn").onclick = () => $(".sidebar").classList.toggle("open");
   $("#search").oninput = e => { state.query = e.target.value.trim().toLowerCase(); renderNav(); };
   document.addEventListener("keydown", e => {
@@ -95,19 +125,20 @@ const matches = m => !state.query || `${m.title} ${m.description} ${m.key}`.toLo
 
 function renderNav() {
   const items = [
-    el("button", { class: state.view === "overview" ? "active" : "", onclick: () => go("overview") }, "🏠 Обзор"),
-    el("button", { class: state.view === "members" ? "active" : "", onclick: () => go("members") }, "👥 Участники"),
-    el("button", { class: state.view === "audit" ? "active" : "", onclick: () => go("audit") }, "📜 Журнал действий"),
+    el("button", { class: state.view === "overview" ? "active" : "", onclick: () => go("overview") }, icon("home"), "Обзор"),
+    el("button", { class: state.view === "analytics" ? "active" : "", onclick: () => go("analytics") }, icon("chart"), "Аналитика"),
+    el("button", { class: state.view === "members" ? "active" : "", onclick: () => go("members") }, icon("users"), "Участники"),
+    el("button", { class: state.view === "audit" ? "active" : "", onclick: () => go("audit") }, icon("list"), "Журнал действий"),
   ];
   let shown = 0;
   for (const cat of Object.keys(CATEGORY_TITLES)) {
     const mods = state.modules.filter(m => m.category === cat && matches(m));
     if (!mods.length) continue;
-    items.push(el("div", { class: "group" }, CATEGORY_TITLES[cat]));
+    items.push(el("div", { class: "group" }, icon(CAT_ICON[cat], ""), CATEGORY_TITLES[cat]));
     for (const m of mods) {
       shown++;
       items.push(el("button", { class: state.view === `mod:${m.key}` ? "active" : "", onclick: () => go(`mod:${m.key}`) },
-        `${m.icon} ${m.title}`, m.toggleable ? el("span", { class: `dot ${m.config.enabled ? "on" : ""}` }) : null));
+        modIcon(m), m.title, m.toggleable ? el("span", { class: `dot ${m.config.enabled ? "on" : ""}` }) : null));
     }
   }
   if (state.query && !shown) items.push(el("div", { class: "search-empty" }, "Ничего не найдено"));
@@ -119,6 +150,7 @@ function renderView() {
   if (state.view === "overview") { $("#topTitle").textContent = "Обзор"; return renderOverview(main); }
   if (state.view === "members") { $("#topTitle").textContent = "Участники"; return renderMembers(main); }
   if (state.view === "audit") { $("#topTitle").textContent = "Журнал действий"; return renderAudit(main); }
+  if (state.view === "analytics") { $("#topTitle").textContent = "Аналитика"; return renderAnalytics(main); }
   const m = state.modules.find(x => `mod:${x.key}` === state.view);
   if (m) { $("#topTitle").textContent = m.title; return renderModule(main, m); }
 }
@@ -153,7 +185,7 @@ async function renderOverview(main) {
     sections.push(el("div", { class: "cat-title" }, CATEGORY_TITLES[cat]));
     sections.push(el("div", { class: "grid-mods" }, mods.map(m =>
       el("div", { class: "mod", onclick: () => go(`mod:${m.key}`) },
-        el("h4", {}, `${m.icon} ${m.title}`, m.toggleable ? switchEl(m.config.enabled, on => setEnabled(m, on)) : el("span", { class: "pill on" }, "всегда")),
+        el("h4", {}, modIcon(m), m.title, m.toggleable ? switchEl(m.config.enabled, on => setEnabled(m, on)) : el("span", { class: "pill on" }, "всегда")),
         el("p", {}, m.description)))));
   }
   main.replaceChildren(
@@ -289,6 +321,7 @@ function buildInputRaw(f, value) {
     case "channels": case "roles":
       return picker({ items: f.type === "channels" ? channelItems(f.kind) : roleItems(), multi: true, value,
         placeholder: f.type === "channels" ? "Выберите каналы…" : "Выберите роли…" });
+    case "rules": return rulesInput(f, value);
     case "user": {
       const p = picker({ multi: false, value: value ? String(value) : null, placeholder: "— выберите участника —", remote: memberRemote });
       return { ...p, read: () => p.read() || "" };
@@ -299,7 +332,46 @@ function buildInputRaw(f, value) {
   }
 }
 
-const WIDE = new Set(["longtext", "multiselect", "channels", "roles"]);
+// Repeatable group of sub-fields (auto-responder triggers, role DMs, ...). Value: array of objects.
+function rulesInput(f, value) {
+  const wrap = el("div", { class: "rules" });
+  const list = el("div", { class: "rules-list" });
+  const rows = [];
+  const changed = () => wrap.dispatchEvent(new Event("change", { bubbles: true }));
+  const limit = f.max || 25;
+  const count = el("span", {});
+  const addBtn = el("button", { type: "button", class: "btn" }, icon("plus"), "Добавить");
+  const refresh = () => {
+    count.textContent = `${rows.length} / ${limit}`;
+    addBtn.disabled = rows.length >= limit;
+    if (!rows.length) list.replaceChildren(el("div", { class: "rules-empty" }, "Пока ничего нет."));
+    else list.querySelector(".rules-empty")?.remove();
+  };
+  function add(val) {
+    const inputs = {};
+    const body = el("div", { class: "fields" }, f.item_fields.map(sf => {
+      const inp = buildInput(sf, val && val[sf.key] !== undefined ? val[sf.key] : sf.default);
+      inputs[sf.key] = inp;
+      return fieldRow(sf, inp);
+    }));
+    const entry = { inputs };
+    const rm = el("button", { type: "button", class: "btn danger sm", onclick: () => {
+      rows.splice(rows.indexOf(entry), 1); entry.node.remove(); refresh(); changed();
+    } }, icon("trash"), "Удалить");
+    entry.node = el("div", { class: "rule" }, body, el("div", { class: "row" }, rm));
+    rows.push(entry);
+    list.querySelector(".rules-empty")?.remove();
+    list.append(entry.node);
+  }
+  (value || []).forEach(add);
+  addBtn.onclick = () => { add(null); refresh(); changed(); };
+  wrap.append(list, el("div", { class: "rules-foot" }, addBtn, count));
+  refresh();
+  const read = () => rows.map(r => Object.fromEntries(Object.entries(r.inputs).map(([k, i]) => [k, i.read()])));
+  return { node: wrap, read, el: wrap };
+}
+
+const WIDE = new Set(["longtext", "multiselect", "channels", "roles", "rules"]);
 const fieldRow = (f, inp) => el("div", { class: `field ${WIDE.has(f.type) ? "wide" : ""} ${f.type === "bool" ? "inline" : ""}` },
   el("label", {}, f.label, f.help ? el("span", { class: "help" }, f.help) : null), inp.node);
 
@@ -322,7 +394,8 @@ function renderModule(main, m) {
 
   const msg = el("span", { class: "msg" });
   const saveBtn = el("button", { class: "btn primary" }, "Сохранить");
-  const resetBtn = el("button", { class: "btn" }, "Сбросить");
+  const resetBtn = el("button", { class: "btn" }, "Отменить правки");
+  const defaultsBtn = el("button", { class: "btn danger", onclick: () => resetToDefaults(main, m) }, icon("rotate"), "К умолчаниям");
   let initial = {};
   const readAll = () => Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.read()]));
   initial = JSON.stringify(readAll());
@@ -352,17 +425,36 @@ function renderModule(main, m) {
     await setEnabled(m, enabledInput.read());
   });
 
-  main.replaceChildren(
+  put(main,
     el("div", { class: "head" },
-      el("div", {}, el("h2", {}, `${m.icon} ${m.title}`), el("p", { class: "sub" }, m.description)),
+      el("div", {}, el("h2", {}, modIcon(m, "lg"), m.title), el("p", { class: "sub" }, m.description)),
       enabledInput ? enabledInput.node : null),
     ...cards.map(c => el("div", { class: "card" }, el("h3", { class: "group-title" }, c.title),
       c.help ? el("p", { class: "group-help" }, c.help) : null, el("div", { class: "fields" }, c.rows))),
     !cards.length ? el("div", { class: "card empty" }, "У этого модуля нет настроек.") : null,
-    cards.length ? el("div", { class: "savebar" }, msg, resetBtn, saveBtn) : null,
+    cards.length ? el("div", { class: "savebar" }, msg, defaultsBtn, resetBtn, saveBtn) : null,
     m.actions.length ? actionsCard(m) : null,
     ...m.tables.map(t => tableCard(m, t)));
   refreshDirty();
+}
+
+function resetToDefaults(main, m) {
+  const dlg = $("#dlg");
+  const cancel = el("button", { class: "btn" }, "Отмена");
+  const run = el("button", { class: "btn danger" }, "Сбросить настройки");
+  cancel.onclick = () => dlg.close();
+  run.onclick = async () => {
+    run.disabled = true;
+    try {
+      const body = Object.fromEntries(m.fields.map(f => [f.key, f.default ?? null]));
+      const fresh = await api(`${base()}/modules/${m.key}`, { method: "PUT", body: JSON.stringify(body) });
+      m.config = fresh.config; dlg.close(); toast("Настройки сброшены"); renderModule(main, m);
+    } catch (e) { toast(e.message, "err"); run.disabled = false; }
+  };
+  dlg.replaceChildren(el("h3", {}, `Сбросить «${m.title}»?`),
+    el("p", { class: "group-help" }, "Все настройки модуля вернутся к значениям по умолчанию. Накопленные данные (баллы, записи, случаи) не удаляются."),
+    el("div", { class: "row" }, cancel, run));
+  dlg.showModal();
 }
 
 // ── actions (buttons with small parameter forms) ────────────────────────────
@@ -418,6 +510,43 @@ function tableCard(m, t) {
   return card;
 }
 
+// ── analytics ───────────────────────────────────────────────────────────────
+
+async function renderAnalytics(main) {
+  main.replaceChildren(el("div", { class: "empty" }, "Загрузка…"));
+  let days = Number(localStorage.getItem("an_days")) || 30;
+  const draw = async () => {
+    const a = await api(`${base()}/analytics?days=${days}`);
+    const max = Math.max(1, ...a.per_day.map(d => d.n));
+    const hmax = Math.max(1, ...a.per_hour);
+    const tabs = [7, 30, 90].map(d => el("button", { class: `btn sm ${d === days ? "primary" : ""}`, onclick: () => { days = d; localStorage.setItem("an_days", d); draw(); } }, `${d} дн.`));
+    const topMax = Math.max(1, ...a.top_modules.map(t => t.n));
+    main.replaceChildren(
+      el("div", { class: "head" }, el("div", {}, el("h2", {}, icon("chart", "lg"), "Аналитика"),
+        el("p", { class: "sub" }, "Изменения в панели и использование модулей за период")), el("div", { class: "actions" }, tabs)),
+      el("div", { class: "stats" },
+        el("div", { class: "stat" }, el("b", {}, String(a.total)), el("span", {}, `действий за ${days} дн.`)),
+        el("div", { class: "stat" }, el("b", {}, (a.total / days).toFixed(1)), el("span", {}, "в среднем в день")),
+        el("div", { class: "stat" }, el("b", {}, `${a.enabled}/${a.total_modules}`), el("span", {}, "модулей включено"))),
+      el("div", { class: "card" }, el("h3", { class: "group-title" }, "Активность по дням"),
+        el("div", { class: "bars", role: "img", "aria-label": "График действий по дням" }, a.per_day.map(d =>
+          el("div", { class: `bar ${d.n ? "" : "zero"}`, style: `height:${Math.max(2, d.n / max * 100)}%`, title: `${d.day}: ${d.n}` }))),
+        el("div", { class: "axis" }, el("span", {}, a.per_day[0]?.day || ""), el("span", {}, a.per_day.at(-1)?.day || ""))),
+      el("div", { class: "card" }, el("h3", { class: "group-title" }, "Пиковые часы (МСК)"),
+        el("div", { class: "hours" }, a.per_hour.map((n, h) => el("i", { style: `--v:${(n / hmax).toFixed(2)}`, title: `${String(h).padStart(2, "0")}:00 — ${n}` }))),
+        el("div", { class: "hours-axis" }, a.per_hour.map((_, h) => el("span", {}, h % 3 === 0 ? String(h).padStart(2, "0") : "")))),
+      el("div", { class: "sections" },
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, "Самые используемые модули"),
+          a.top_modules.length ? el("div", { class: "top-list" }, a.top_modules.map(t => el("div", { class: "top-row" },
+            el("span", {}, state.modules.find(m => m.key === t.module)?.title || t.module || "—"),
+            el("span", { class: "track" }, el("i", { style: `width:${t.n / topMax * 100}%` })), el("b", {}, String(t.n)))))
+            : el("div", { class: "empty" }, "За период модули не менялись.")),
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, "Статус модулей"),
+          a.categories.map(c => el("div", { class: "cat-row" }, el("span", {}, CATEGORY_TITLES[c.category] || c.category), el("b", {}, `${c.enabled}/${c.total}`))))));
+  };
+  try { await draw(); } catch (e) { main.replaceChildren(el("div", { class: "card empty" }, e.message)); }
+}
+
 // ── members ─────────────────────────────────────────────────────────────────
 
 function renderMembers(main) {
@@ -457,7 +586,7 @@ function renderMembers(main) {
   }
   input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => find(input.value.trim()), 200); });
   main.replaceChildren(
-    el("div", { class: "head" }, el("div", {}, el("h2", {}, "👥 Участники"), el("p", { class: "sub" }, "Баланс, минуты в войсе, варны, уровень и прочее по каждому участнику"))),
+    el("div", { class: "head" }, el("div", {}, el("h2", {}, icon("users", "lg"), "Участники"), el("p", { class: "sub" }, "Баланс, минуты в войсе, варны, уровень и прочее по каждому участнику"))),
     input, results, profile);
   find("");
 }
@@ -497,7 +626,7 @@ async function renderAudit(main) {
     }).join("; ");
   };
   main.replaceChildren(
-    el("div", { class: "head" }, el("div", {}, el("h2", {}, "📜 Журнал действий"), el("p", { class: "sub" }, "Кто и что менял в панели"))),
+    el("div", { class: "head" }, el("div", {}, el("h2", {}, icon("list", "lg"), "Журнал действий"), el("p", { class: "sub" }, "Кто и что менял в панели"))),
     rows.length
       ? el("div", { class: "card" }, el("div", { class: "tbl-scroll" }, el("table", {},
           el("thead", {}, el("tr", {}, ["Когда", "Кто", "Модуль", "Что"].map(h => el("th", {}, h)))),

@@ -58,6 +58,9 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.roles_extra",
     "modules.voice_server",
     "modules.team",
+    "modules.server_tools",
+    "modules.community_tools",
+    "modules.support_team",
 ]
 
 

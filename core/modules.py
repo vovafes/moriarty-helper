@@ -158,6 +158,22 @@ def _coerce(f: dict, value: Any) -> Any:
             return sorted({int(v) for v in value})
         except (TypeError, ValueError):
             raise ValidationError(f"«{f['label']}»: некорректный ID в списке")
+    if t == "rules":
+        if not isinstance(value, list):
+            raise ValidationError(f"«{f['label']}»: ожидается список")
+        limit = f.get("max", 25)
+        if len(value) > limit:
+            raise ValidationError(f"«{f['label']}»: не больше {limit} записей")
+        out = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValidationError(f"«{f['label']}»: некорректная запись")
+            clean = {}
+            for sf in f["item_fields"]:
+                raw = item.get(sf["key"])
+                clean[sf["key"]] = _coerce(sf, raw) if raw is not None else sf.get("default")
+            out.append(clean)
+        return out
     raise ValidationError(f"неизвестный тип поля {t}")
 
 

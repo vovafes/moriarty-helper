@@ -16,3 +16,4 @@ moriarty.sqlite-*
 .env.bak
 .env.*
 !.env.example
+.venv/

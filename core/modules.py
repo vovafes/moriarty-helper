@@ -5,7 +5,8 @@ so adding a setting means adding a schema field, not touching HTML.
 
 Field types:  bool | text | longtext | number | select | multiselect | user | channel | role |
               channels | roles
-Each field: {"key", "label", "type", "default", ["help"], ["options"], ["min"], ["max"]}
+Each field: {"key", "label", "type", "default", ["help"], ["options"], ["min"], ["max"], ["secret"]}
+("secret": True keeps the value out of the audit log.)
 """
 
 from dataclasses import dataclass, field
@@ -199,7 +200,10 @@ def set_config(guild_id: int, key: str, patch: dict, *, user_id: int | None = No
     else:
         db.save_config(guild_id, key, after)
     _cache.pop((guild_id, key), None)
-    db.audit(guild_id, user_id, user_name, key, "config_update", changed)
+    # поля с "secret": True (API-ключи) в журнал аудита не пишем — только факт изменения
+    logged = {k: ({"from": "•••", "to": "•••"} if by_key.get(k, {}).get("secret") else v)
+              for k, v in changed.items()}
+    db.audit(guild_id, user_id, user_name, key, "config_update", logged)
     return after
 
 

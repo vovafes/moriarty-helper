@@ -17,3 +17,5 @@ moriarty.sqlite-*
 .env.*
 !.env.example
 .venv/
+ollama_keys.json
+ollama_keys.json.tmp

@@ -167,11 +167,11 @@ _voice_presence_locks: dict = {}  # { guild_id: asyncio.Lock }
 async def _voice_presence_ensure(guild: discord.Guild):
     """Подключает бота к настроенному голосовому каналу, если он должен там быть.
 
-    reconnect=False специально: встроенный авто-реконнект discord.py при обрыве
-    хендшейка (код 4006 — "сессия недействительна") зацикливается на уже протухшей
-    сессии и ретраит бесконечно внутри самого connect(). Здесь один неудачный
-    коннект просто логируется, а свежую попытку (с новой сессией) делает
-    voice_presence_loop раз в 5 минут или следующий вызов из on_voice_state_update.
+    reconnect=True: при обрыве голосового вебсокета (1006, таймаут) discord.py сам
+    переподключается с backoff, не выкидывая бота из канала. Раньше стояло False из-за
+    зацикливания на коде 4006, но в discord.py 2.7.1 это исправлено. Если коннект всё же
+    не удался, свежую попытку делает voice_presence_loop раз в 5 минут или следующий
+    вызов из on_voice_state_update.
     """
     vp = voice_presence_settings.get(guild.id)
     if not vp or not vp.get("enabled") or not vp.get("channel_id"):
@@ -196,9 +196,9 @@ async def _voice_presence_ensure(guild: discord.Guild):
                     await vc.disconnect(force=True)
                 except Exception:
                     pass
-            await channel.connect(self_mute=True, self_deaf=True, reconnect=False, timeout=15)
+            await channel.connect(self_mute=True, self_deaf=True, reconnect=True, timeout=15)
         except Exception as e:
-            print(f"WARNING: voice_presence_ensure guild={guild.id}: {e}")
+            print(f"WARNING: voice_presence_ensure guild={guild.id}: {e!r}")
 
 
 @tasks.loop(minutes=5)

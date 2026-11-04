@@ -465,7 +465,9 @@ def build_cfg_category_embed(guild: discord.Guild, category: str) -> discord.Emb
     elif category == "pvp":
         pvg = pvp_module.guild_config(pvp_module.load_config(), gid)
         e.title = "⚔️ PvP-события"
-        lines = [f"**Канал публикаций:** {_cs(guild, pvg.get('channel_id'))}", ""]
+        pr = pvg.get("ping_role_id")
+        lines = [f"**Канал публикаций:** {_cs(guild, pvg.get('channel_id'))}",
+                 f"**Тег роли:** {f'<@&{pr}>' if pr else 'не задан'}", ""]
         for key, meta in pvp_module.EVENTS.items():
             status = "🟢 вкл" if pvg["events"].get(key, True) else "🔴 выкл"
             lines.append(f"{meta['label']} · {status} — {', '.join(meta['times'])} МСК")
@@ -1153,6 +1155,20 @@ class _CfgPvpChannelPicker(ui.ChannelSelect):
         await interaction.message.edit(embed=embed)
 
 
+class _CfgPvpRolePicker(ui.RoleSelect):
+    def __init__(self, row: int):
+        super().__init__(placeholder="🔔 Роль для тега в постах", min_values=0, max_values=1, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        role = self.values[0] if self.values else None
+        cfg = pvp_module.load_config()
+        g = pvp_module.guild_config(cfg, interaction.guild_id)
+        g["ping_role_id"] = role.id if role else None
+        pvp_module.save_config(cfg)
+        await interaction.response.edit_message(embed=build_cfg_category_embed(interaction.guild, "pvp"),
+                                                view=_CfgPvpView(interaction.guild))
+
+
 class _CfgPvpView(ui.View):
     def __init__(self, guild: discord.Guild):
         super().__init__(timeout=300)
@@ -1187,6 +1203,7 @@ class _CfgPvpView(ui.View):
             self.add_item(btn)
 
         self.add_item(_CfgPvpChannelPicker(row=2))
+        self.add_item(_CfgPvpRolePicker(row=3))
 
 
 def _cfg_make_view(guild: discord.Guild, cat: str) -> ui.View:

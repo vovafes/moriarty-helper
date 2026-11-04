@@ -146,7 +146,7 @@ reg(modules.Module(
 
 def _pvp_load(gid):
     g = pvp_module.guild_config(pvp_module.load_config(), gid)
-    return {"channel": g.get("channel_id"), "image_url": g.get("image_url") or "",
+    return {"channel": g.get("channel_id"), "ping_role": g.get("ping_role_id"), "image_url": g.get("image_url") or "",
             "events": [k for k in pvp_module.EVENTS if g["events"].get(k, True)]}
 
 
@@ -154,6 +154,7 @@ def _pvp_save(gid, cfg):
     full = pvp_module.load_config()
     g = pvp_module.guild_config(full, gid)
     g["channel_id"] = cfg["channel"]
+    g["ping_role_id"] = cfg.get("ping_role") or None
     g["image_url"] = (cfg["image_url"] or "").strip() or None
     g["events"] = {k: (k in cfg["events"]) for k in pvp_module.EVENTS}
     pvp_module.save_config(full)
@@ -166,6 +167,7 @@ reg(modules.Module(
         {"key": "channel", "label": "Канал публикаций", "type": "channel", "kind": "text", "default": None},
         {"key": "events", "label": "Какие события публиковать", "type": "multiselect", "default": [],
          "options": [{"value": k, "label": f"{m['label']} — {', '.join(m['times'])} МСК"} for k, m in pvp_module.EVENTS.items()]},
+        {"key": "ping_role", "label": "Тег роли в постах", "type": "role", "default": None},
         {"key": "image_url", "label": "Картинка к постам", "type": "text", "default": ""},
     ],
     loader=_pvp_load, saver=_pvp_save,

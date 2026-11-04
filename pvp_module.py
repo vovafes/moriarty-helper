@@ -84,6 +84,7 @@ def guild_config(cfg: dict, guild_id: int) -> dict:
     g.setdefault("channel_id", None)
     g.setdefault("events", {key: True for key in EVENTS})
     g.setdefault("image_url", None)
+    g.setdefault("ping_role_id", None)
     g.setdefault("last_posted", {})
     return g
 
@@ -128,6 +129,12 @@ def _schedule_embed(cfg: dict, guild_id: int) -> discord.Embed:
     embed.add_field(
         name="Канал публикаций",
         value=f"<#{channel_id}>" if channel_id else "не задан (`/pvp_канал`)",
+        inline=False,
+    )
+    role_id = g.get("ping_role_id")
+    embed.add_field(
+        name="Тег роли",
+        value=f"<@&{role_id}>" if role_id else "не задан (`/pvp_роль`)",
         inline=False,
     )
     image_url = g.get("image_url") or DEFAULT_REFERENCE_URL
@@ -189,7 +196,15 @@ def setup_pvp(bot) -> None:
                         print(f"WARNING: pvp_schedule_loop channel {channel_id}: {e}")
                         continue
                 try:
-                    await channel.send(embed=_announce_embed(key, g))
+                    role_id = g.get("ping_role_id")
+                    await channel.send(
+                        content=f"<@&{role_id}>" if role_id else None,
+                        embed=_announce_embed(key, g),
+                        allowed_mentions=discord.AllowedMentions(
+                            roles=[discord.Object(id=int(role_id))] if role_id else False,
+                            everyone=False, users=False,
+                        ),
+                    )
                 except Exception as e:
                     print(f"WARNING: pvp_schedule_loop send {key} guild={guild_id_str}: {e}")
                     continue
@@ -228,6 +243,19 @@ def setup_pvp(bot) -> None:
         g["channel_id"] = канал.id
         save_config(cfg)
         await interaction.response.send_message(f"✅ PvP-события будут публиковаться в {канал.mention}.")
+
+    @tree.command(name="pvp_роль", description="Роль, которую бот тегает в постах о PvP-событиях")
+    @app_commands.describe(роль="Роль для тега (оставь пустым, чтобы убрать тег)")
+    async def pvp_role_cmd(interaction: discord.Interaction, роль: discord.Role = None):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Только для админа.", ephemeral=True)
+            return
+        cfg = load_config()
+        g = guild_config(cfg, interaction.guild_id)
+        g["ping_role_id"] = роль.id if роль else None
+        save_config(cfg)
+        msg = f"✅ В постах будет тегаться {роль.mention}." if роль else "✅ Тег роли убран."
+        await interaction.response.send_message(msg, allowed_mentions=discord.AllowedMentions.none())
 
     @tree.command(name="pvp_событие", description="Включить/выключить публикацию PvP-события")
     @app_commands.describe(событие="Какое событие", включено="Включить или выключить публикацию")

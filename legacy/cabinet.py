@@ -10,15 +10,20 @@ from legacy.feedback import (
 )
 from legacy.helpers import (
     _footer,
+    build_shop_embed,
     get_chips,
     get_points,
     get_warns,
     is_admin,
     warn_payment_label,
 )
+from legacy.shop import (
+    ShopView,
+)
 from legacy.state import (
     cabinet_invite_links,
     cabinet_panels,
+    guild_shop_items,
     message_counts,
     save_data,
     voice_join_times,
@@ -100,6 +105,14 @@ class PersonalCabinetView(ui.View):
             embed.add_field(name="Оплата", value=warn_payment_label(warn_data), inline=True)
         embed.set_footer(text="MORIARTY", icon_url=_footer(interaction.guild_id))
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @ui.button(label="Магазин", emoji="🛒", style=discord.ButtonStyle.success, custom_id="cabinet_shop", row=0)
+    async def btn_shop(self, interaction: discord.Interaction, button: ui.Button):
+        gid = interaction.guild_id
+        embed = build_shop_embed(gid)
+        if not guild_shop_items.get(gid):
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=embed, view=ShopView(gid), ephemeral=True)
 
     @ui.button(label="Фидбек", emoji="💬", style=discord.ButtonStyle.danger, custom_id="cabinet_feedback", row=0)
     async def btn_feedback(self, interaction: discord.Interaction, button: ui.Button):

@@ -22,6 +22,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core import db, embeds, modules
+from core.tools_group import install as install_tools, tool, uninstall as uninstall_tools
 
 TIERS = {
     "easy": ("🟢", "Лёгкие", 300),
@@ -421,10 +422,16 @@ class Monopoly(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="monopoly", description="Недельные задания Monopolist / Battle Pass: выбрать фракцию и отметить выполненное")
+    async def cog_load(self):
+        install_tools(self.bot, self)
+
+    async def cog_unload(self):
+        uninstall_tools(self)
+
+    # /tools monopoly — глобальный лимит 100 слэш-команд исчерпан, поэтому команда живёт в группе /tools
+    @tool("monopoly", "Недельные задания Monopolist / Battle Pass: выбрать фракцию и отметить выполненное")
     @app_commands.describe(faction="Фракция (по умолчанию — из настроек)")
     @app_commands.choices(faction=[app_commands.Choice(name=o["label"][:100], value=o["value"]) for o in FACTION_CHOICES])
-    @app_commands.guild_only()
     async def monopoly(self, interaction: discord.Interaction, faction: str | None = None):
         cfg = modules.get_config(interaction.guild_id, "monopoly")
         if not cfg["enabled"]:

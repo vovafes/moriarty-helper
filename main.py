@@ -61,6 +61,7 @@ MODULE_EXTENSIONS: list[str] = [
     "modules.server_tools",
     "modules.community_tools",
     "modules.support_team",
+    "modules.monopoly",
 ]
 
 

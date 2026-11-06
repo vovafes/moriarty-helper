@@ -433,6 +433,7 @@ function renderModule(main, m) {
       c.help ? el("p", { class: "group-help" }, c.help) : null, el("div", { class: "fields" }, c.rows))),
     !cards.length ? el("div", { class: "card empty" }, "У этого модуля нет настроек.") : null,
     cards.length ? el("div", { class: "savebar" }, msg, defaultsBtn, resetBtn, saveBtn) : null,
+    m.key === "monopoly" ? monopolyCard() : null,
     m.actions.length ? actionsCard(m) : null,
     ...m.tables.map(t => tableCard(m, t)));
   refreshDirty();
@@ -455,6 +456,51 @@ function resetToDefaults(main, m) {
     el("p", { class: "group-help" }, "Все настройки модуля вернутся к значениям по умолчанию. Накопленные данные (баллы, записи, случаи) не удаляются."),
     el("div", { class: "row" }, cancel, run));
   dlg.showModal();
+}
+
+// ── monopoly: weekly task tracker (checkboxes per faction/tier) ─────────────
+
+function monopolyCard() {
+  const card = el("div", { class: "card" });
+  let current = null, all = [];
+  const load = async () => {
+    all = await api(`${base()}/monopoly`);
+    current = current && all.find(f => f.faction === current) ? current : (all[0] && all[0].faction);
+    draw();
+  };
+  const tick = async (f, tier, boxes) => {
+    const picked = boxes.filter(b => b.checked).map(b => Number(b.dataset.i));
+    try {
+      const fresh = await api(`${base()}/monopoly/${f.faction}`, { method: "POST", body: JSON.stringify({ tier, picked }) });
+      all = all.map(x => (x.faction === f.faction ? fresh : x));
+      draw();
+    } catch (e) { toast(e.message, "err"); load(); }
+  };
+  const draw = () => {
+    const f = all.find(x => x.faction === current);
+    if (!f) { card.replaceChildren(el("div", { class: "empty" }, "Нет данных.")); return; }
+    const sel = el("select", { onchange: e => { current = e.target.value; draw(); } },
+      all.map(x => el("option", { value: x.faction, selected: x.faction === current }, `${x.emoji} ${x.title} — ${x.total} б. · ${x.cells} кл.`)));
+    const tiers = f.tiers.map(t => {
+      const boxes = t.tasks.map((txt, i) => {
+        const cb = el("input", { type: "checkbox" }); cb.checked = t.done.includes(i); cb.dataset.i = i;
+        return el("label", {}, cb, txt);
+      });
+      const inputs = boxes.map(l => l.querySelector("input"));
+      inputs.forEach(cb => cb.addEventListener("change", () => tick(f, t.key, inputs)));
+      return el("div", { style: "margin-top:14px" },
+        el("h4", { style: "margin:0 0 8px" }, `${t.icon} ${t.name} — ${t.points} б. за задание (${t.done.length}/${t.tasks.length})`),
+        el("div", { class: "checks", style: "grid-template-columns:1fr" }, boxes));
+    });
+    card.replaceChildren(
+      el("h3", { class: "group-title" }, "Задания недели"),
+      el("p", { class: "group-help" }, `За неделю: ${f.week_points} б. · Всего: ${f.total} б. → ${f.cells} клеток (+${f.rest}/${f.cell_points}). ` +
+        `Сброс: ${new Date(f.week_end * 1000).toLocaleString("ru-RU")}.` + (f.published ? " Сообщение в Discord обновляется само." : "")),
+      sel, ...tiers);
+  };
+  card.append(el("div", { class: "empty" }, "Загрузка…"));
+  load().catch(e => card.replaceChildren(el("div", { class: "empty" }, e.message)));
+  return card;
 }
 
 // ── actions (buttons with small parameter forms) ────────────────────────────

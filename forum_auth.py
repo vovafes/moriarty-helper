@@ -42,7 +42,7 @@ def get_cookie() -> str:
                     c = line.split("=", 1)[1].strip().strip("\"'")
     if not c and COOKIE_FILE.exists():
         c = COOKIE_FILE.read_text(encoding="utf-8").strip()
-    return c.removeprefix("Cookie:").strip()
+    return " ".join(c.removeprefix("Cookie:").split())  # без переводов строк: иначе ломается заголовок
 
 
 def headers(extra: dict | None = None) -> dict:

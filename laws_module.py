@@ -220,6 +220,9 @@ LAW_ALIASES: dict[str, tuple[str, str]] = {
     "конституция": ("Конституция", "Конституции"),
     "конституции": ("Конституция", "Конституции"),
 }
+# Короткие сокращения совпадают с обычными словами («ПК» — компьютер), поэтому считаем их
+# названием документа только когда в вопросе есть номер статьи («3.10 ук»).
+_AMBIGUOUS_ALIASES = {"ук", "ак", "пк", "ск", "тк", "дк"}
 _DOC_ABBR = {
     "Уголовно-административный кодекс": "УАК", "Процессуальный кодекс": "ПК",
     "Судебный кодекс": "СК", "Трудовой кодекс": "ТК", "Дорожный кодекс (ПДД)": "ДК",
@@ -321,7 +324,7 @@ def _lookup_articles(conn: sqlite3.Connection, numbers: list[str], doc_like: lis
     for num in numbers[:3]:
         sql = ("SELECT law_name, article_code, body, url FROM laws "
                "WHERE (article_code = ?1 OR article_code = 'Статья ' || ?1 "
-               "OR article_code LIKE ?1 || ' ч.%' OR article_code LIKE 'Статья ' || ?1 || ' ч.%'"
+               "OR article_code LIKE ?1 || ' ч.%' OR article_code LIKE 'Статья ' || ?1 || ' ч.%' "
                "OR article_code LIKE ?1 || '.')")
         args: list = [num]
         if doc_like:
@@ -343,9 +346,11 @@ def _search_sync(question: str, top_k: int) -> list[dict]:
     # номера статей («17.1») и названные документы («УАК») обрабатываем отдельно от FTS:
     # иначе «уак» требуется как слово в тексте, а «17» и «1» матчатся где попало
     numbers = _ARTICLE_NUM_RE.findall(question)
-    doc_like = [LAW_ALIASES[w.lower()][0] for w in _words(question) if w.lower() in LAW_ALIASES]
+    doc_like = [LAW_ALIASES[w.lower()][0] for w in _words(question)
+                if w.lower() in LAW_ALIASES and (numbers or w.lower() not in _AMBIGUOUS_ALIASES)]
     cleaned = _FILLER_RE.sub(" ", _ARTICLE_NUM_RE.sub(" ", question))
-    all_words = [w for w in _words(cleaned) if w.lower() not in LAW_ALIASES]
+    all_words = [w for w in _words(cleaned)
+                 if not (w.lower() in LAW_ALIASES and (numbers or w.lower() not in _AMBIGUOUS_ALIASES))]
     significant = [w for w in all_words if w.lower() not in _STOPWORDS]
 
     conn = sqlite3.connect(DB_FILE)

@@ -133,6 +133,8 @@ def fetch(url: str, retries: int = 3) -> str:
                 pass
             forum_auth.check(e.code, body, url)  # 403 со страницей входа → ForumAuthError
             last_err = e
+            if e.code in (404, 410):  # тема удалена — повторы бессмысленны
+                break
             time.sleep(1.5 * (attempt + 1))
         except (urllib.error.URLError, TimeoutError) as e:
             last_err = e

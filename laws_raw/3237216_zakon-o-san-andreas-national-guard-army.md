@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237216
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-san-andreas-national-guard-army.3237216/#post-8856219
-- **Скрейп**: 2026-08-30T12:09:10
+- **Скрейп**: 2026-11-09T12:22:16
 - **Чанков**: 17
 - **Длина текста**: 8539 символов
 

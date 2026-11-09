@@ -1,7 +1,7 @@
 # Поставка анальгетиков
 
 - **URL**: https://wiki.gta5rp.com/docs/crime-factions/supplies-analgesics
-- **Скрейп**: 2026-10-19T09:52:52
+- **Скрейп**: 2026-11-09T12:25:09
 - **Чанков**: 5
 
 ---

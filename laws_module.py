@@ -34,8 +34,10 @@ import discord
 from discord import app_commands
 
 import events_feed
+import forum_auth
 import llm_keys
 
+FORUM_LAWS_URL = "https://forum.gta5rp.com/forums/zakonodatelnaja-baza.1732/"
 DB_FILE = "laws.sqlite"
 CONFIG_FILE = "laws_config.json"
 USAGE_FILE = "laws_usage.json"
@@ -55,8 +57,8 @@ DEFAULT_MODEL = "gpt-oss:120b"
 GROQ_FALLBACK_MODEL = "openai/gpt-oss-120b"
 OLLAMA_FALLBACK_MODEL = "gpt-oss:120b"
 
-TOP_K = 6
-MAX_PER_KIND = 4  # не даём одному источнику (законы/вики) занять весь топ
+TOP_K = 10
+MAX_PER_KIND = 8  # не даём одному источнику (законы/вики) занять весь топ
 MAX_QUESTION_LEN = 500
 MAX_ANSWER_TOKENS = 700
 OLLAMA_NUM_PREDICT = 1500  # gpt-oss тратит часть лимита на рассуждение
@@ -65,22 +67,37 @@ LLM_TIMEOUT = 90
 SYSTEM_PROMPT = (
     "Ты — помощник Discord-сервера семьи Moriarty (RAGE Multiplayer, проект GTA5RP, "
     "сервер №20 Murrieta). Знаешь законы сервера и игровую вики.\n\n"
+    "КАК УСТРОЕНЫ ВЫДЕРЖКИ:\n"
+    "• Заголовок каждой: [номер] [Закон|Вики] Документ (сокращение) · ст./п. X.Y.\n"
+    "• «Документ» — это кодекс, закон или свод правил (УАК — Уголовно-административный кодекс, "
+    "ПК — Процессуальный, ДК/ПДД — Дорожный, ТК — Трудовой, СК — Судебный и т.д.).\n"
+    "• «X.Y» — НОМЕР статьи/пункта ВНУТРИ этого документа. Сам номер состоит только из цифр: "
+    "в «17.1» нет ни названия кодекса, ни слова «статья». Один и тот же номер (например 17.1) "
+    "есть в разных документах и значит в каждом своё — смотри на название документа в заголовке.\n"
+    "• Если у номера пометка «ч.2» — это продолжение длинной статьи, а не отдельная статья.\n\n"
     "ПРАВИЛА:\n"
-    "1. Отвечай ТОЛЬКО на основе приведённых ниже выдержек. Каждая помечена: "
-    "[Закон] — законодательная база Murrieta, [Вики] — игровая вики проекта.\n"
-    "2. Если в выдержках нет ответа — напиши «В моей базе этого нет» и НЕ выдумывай. "
-    "Цифры, КД, суммы и сроки приводи только такие, как в выдержках.\n"
-    "3. На юридические вопросы называй номер статьи и суть, цитата 1-3 строки. "
-    "На игровые — объясняй по шагам, если это инструкция.\n"
-    "4. Вики описывает механики общие для проекта; если выдержка про другой сервер "
-    "или может отличаться на Murrieta — скажи об этом.\n"
-    "5. Не путай Murrieta с другими серверами GTA5RP — кодексы у них разные.\n"
-    "6. Отвечай на русском, кратко (3-7 предложений), без воды.\n"
-    "7. Если вопрос не про законы и не про игру — кратко перенаправь: «Это вне моей базы».\n"
-    "8. Про мероприятия на сервере (МП, ГМП) отвечай по блоку «АКТУАЛЬНЫЕ МЕРОПРИЯТИЯ»: "
+    "1. Отвечай ТОЛЬКО на основе выдержек ниже. Если в них нет ответа — напиши «В моей базе "
+    "этого нет» и НЕ выдумывай. Цифры, КД, суммы, сроки и номера статей бери только из выдержек.\n"
+    "2. Ссылку на норму пиши как «ст. 17.1 УАК» (или «п. 17.1 Правил лидеров»): сначала «ст.»/«п.», "
+    "затем номер, затем сокращение документа — по разу. Никогда не пиши «17.1 УАК статья» и не "
+    "дублируй название. Если пользователь написал просто «17.1» или «статья 17.1 УАК» — это "
+    "номер; найди его в выдержках у нужного документа (если указан — у него) и объясни суть.\n"
+    "3. Если подходящих номеров в нескольких документах — коротко перечисли каждый с названием "
+    "документа и спроси, какой нужен; если из контекста вопроса ясно (наказание, штраф, арест → "
+    "УАК; ПДД, скорость → ДК; рейд, капт → правила фракций) — отвечай сразу про него.\n"
+    "4. На юридические вопросы: номер статьи, суть, цитата 1-3 строки, затем наказание/штраф, "
+    "если оно в выдержке. На игровые — по шагам, если это инструкция.\n"
+    "5. Выдержки могут быть неполными: если вопрос шире (например, «что за это будет»), а нужной "
+    "части нет, скажи, что нашёл и чего не хватает, а не отвечай «нет в базе» целиком.\n"
+    "6. Вики описывает механики общие для проекта; если выдержка про другой сервер "
+    "или может отличаться на Murrieta — скажи об этом. Не путай Murrieta с другими серверами.\n"
+    "7. Отвечай на русском, по делу (3-8 предложений), без воды и без пересказа вопроса.\n"
+    "8. Если вопрос не про законы и не про игру — кратко: «Это вне моей базы».\n"
+    "9. Про мероприятия на сервере (МП, ГМП) отвечай по блоку «АКТУАЛЬНЫЕ МЕРОПРИЯТИЯ»: "
     "прямо скажи, есть ли мероприятия (сегодня / в ближайшее время) или нет, и перечисли "
     "предстоящие с датой и временем по МСК. Прошедшие не предлагай. Если у темы статус "
-    "«На рассмотрении» — предупреди, что мероприятие ещё может быть не одобрено."
+    "«На рассмотрении» — предупреди, что мероприятие ещё может быть не одобрено. Если блок говорит, "
+    "что форум требует вход / недоступен — так и скажи, НЕ утверждай, что мероприятий нет."
 )
 
 
@@ -189,6 +206,48 @@ _STOPWORDS = {
 }
 
 
+# Сокращения документов → (подстрока названия в БД, как показывать в ссылке).
+# Порядок важен: длинные раньше коротких не нужно, ключи сравниваются целым словом.
+LAW_ALIASES: dict[str, tuple[str, str]] = {
+    "уак": ("Уголовно-административный кодекс", "УАК"),
+    "ук": ("Уголовно-административный кодекс", "УАК"),
+    "ак": ("Уголовно-административный кодекс", "УАК"),
+    "пк": ("Процессуальный кодекс", "ПК"),
+    "ск": ("Судебный кодекс", "СК"),
+    "тк": ("Трудовой кодекс", "ТК"),
+    "дк": ("Дорожный кодекс", "ДК"),
+    "пдд": ("Дорожный кодекс", "ДК"),
+    "конституция": ("Конституция", "Конституции"),
+    "конституции": ("Конституция", "Конституции"),
+}
+_DOC_ABBR = {
+    "Уголовно-административный кодекс": "УАК", "Процессуальный кодекс": "ПК",
+    "Судебный кодекс": "СК", "Трудовой кодекс": "ТК", "Дорожный кодекс (ПДД)": "ДК",
+    "Конституция Штата Сан-Андреас": "Конституция",
+}
+_ARTICLE_NUM_RE = re.compile(r"(?<![\d.])(\d{1,2}\.\d{1,2})(?![\d])")
+_FILLER_RE = re.compile(r"\b(статья|статье|статью|статьи|ст|пункт|пункте|п|номер|№)\b\.?", re.IGNORECASE)
+
+
+def _is_article_doc(law_name: str) -> bool:
+    """Кодексы и законы нумеруют «статьями», своды правил — «пунктами»."""
+    n = law_name.lower()
+    return "кодекс" in n or n.startswith("закон") or n.startswith("конституция")
+
+
+def _ref_label(law_name: str, code: str) -> str:
+    """«Статья 17.1» / «17.1 ч.2» → «ст. 17.1 УАК» (ч.N — продолжение длинной статьи)."""
+    m = re.search(r"\d+(?:\.\d+)?", code)
+    if not m or code.startswith("("):
+        return f"{law_name} — {code}"
+    num = m.group(0)
+    part = re.search(r"ч\.(\d+)", code)
+    abbr = _DOC_ABBR.get(law_name)
+    kind = "ст." if _is_article_doc(law_name) else "п."
+    tail = f" (продолжение, часть {part.group(1)})" if part else ""
+    return f"{kind} {num}{(' ' + abbr) if abbr else ''}{tail}"
+
+
 def _words(question: str) -> list[str]:
     q = _FTS_SAFE.sub(" ", question)
     return [w for w in q.split() if len(w) >= 2]
@@ -223,12 +282,18 @@ _SOURCES = {
 }
 
 
-def _run_query(conn: sqlite3.Connection, query: str, top_k: int) -> list[dict]:
+def _run_query(conn: sqlite3.Connection, query: str, top_k: int,
+               doc_like: list[str] | None = None) -> list[dict]:
     """Ищет в обоих источниках и сливает по bm25, не давая одному занять весь топ."""
     found: list[tuple[float, dict]] = []
     for kind, sql in _SOURCES.items():
+        if doc_like:  # названный документ ищем только среди законов
+            if kind != "law":
+                continue
+            cond = " OR ".join("laws.law_name LIKE ?" for _ in doc_like)
+            sql = sql.replace("WHERE laws_fts MATCH ?", f"WHERE laws_fts MATCH ? AND ({cond})")
         try:
-            rows = conn.execute(sql, (query, top_k)).fetchall()
+            rows = conn.execute(sql, (query, *[f"%{d}%" for d in (doc_like or [])], top_k)).fetchall()
         except sqlite3.OperationalError:
             continue  # таблицы нет (напр. вики ещё не скачана) или кривой MATCH
         for name, section, body, url, rank in rows:
@@ -250,33 +315,83 @@ def _run_query(conn: sqlite3.Connection, query: str, top_k: int) -> list[dict]:
     return result
 
 
+def _lookup_articles(conn: sqlite3.Connection, numbers: list[str], doc_like: list[str]) -> list[dict]:
+    """Прямой поиск по номеру статьи (17.1): точное совпадение article_code, с учётом документа, если он назван."""
+    out: list[dict] = []
+    for num in numbers[:3]:
+        sql = ("SELECT law_name, article_code, body, url FROM laws "
+               "WHERE (article_code = ?1 OR article_code = 'Статья ' || ?1 "
+               "OR article_code LIKE ?1 || ' ч.%' OR article_code LIKE 'Статья ' || ?1 || ' ч.%'"
+               "OR article_code LIKE ?1 || '.')")
+        args: list = [num]
+        if doc_like:
+            sql += " AND (" + " OR ".join("law_name LIKE ?" for _ in doc_like) + ")"
+            args += [f"%{d}%" for d in doc_like]
+        sql += " ORDER BY (law_name LIKE '%кодекс%') DESC, law_name, id LIMIT 8"
+        try:
+            for name, code, body, url in conn.execute(sql, args):
+                out.append({"kind": "law", "law_name": name, "article_code": code,
+                            "body": body, "url": url})
+        except sqlite3.OperationalError:
+            pass
+    return out
+
+
 def _search_sync(question: str, top_k: int) -> list[dict]:
     if not Path(DB_FILE).exists():
         return []
-    all_words = _words(question)
-    if not all_words:
-        return []
+    # номера статей («17.1») и названные документы («УАК») обрабатываем отдельно от FTS:
+    # иначе «уак» требуется как слово в тексте, а «17» и «1» матчатся где попало
+    numbers = _ARTICLE_NUM_RE.findall(question)
+    doc_like = [LAW_ALIASES[w.lower()][0] for w in _words(question) if w.lower() in LAW_ALIASES]
+    cleaned = _FILLER_RE.sub(" ", _ARTICLE_NUM_RE.sub(" ", question))
+    all_words = [w for w in _words(cleaned) if w.lower() not in LAW_ALIASES]
     significant = [w for w in all_words if w.lower() not in _STOPWORDS]
 
     conn = sqlite3.connect(DB_FILE)
     try:
-        # 1) Сначала строгий AND по значимым словам — прицельно бьёт в нужный документ,
-        #    не давая общим словам вопроса ("что", "если", "будет") размывать топ-K.
-        if significant:
-            results = _run_query(conn, _fts_query(significant, "AND"), top_k)
-            if results:
-                return results
-
-        # 2) Не нашли пересечение всех слов сразу — пробуем OR по значимым словам.
-        if significant:
-            results = _run_query(conn, _fts_query(significant, "OR"), top_k)
-            if results:
-                return results
-
-        # 3) Совсем короткий/служебный вопрос — последний шанс с исходными словами.
-        return _run_query(conn, _fts_query(all_words, "OR"), top_k)
+        direct = _lookup_articles(conn, numbers, doc_like) if numbers else []
+        if numbers and doc_like and not direct:
+            # названы и документ, и номер, а такого номера в базе нет: не подсовываем мусор из FTS
+            doc = doc_like[0]
+            return [{"kind": "law", "law_name": doc, "article_code": numbers[0],
+                     "body": f"В базе нет пункта {numbers[0]} документа «{doc}». Либо такой статьи не "
+                             f"существует, либо база устарела (обновляется update_laws.py). Номер не угадывай.",
+                     "url": FORUM_LAWS_URL}]
+        if direct and not significant:
+            return direct[:top_k]
+        if direct:  # номер + смысловые слова: прямые попадания первыми, добор — FTS
+            rest = _fts_search(conn, significant, all_words, top_k, doc_like)
+            seen = {(d["law_name"], d["article_code"]) for d in direct}
+            return (direct + [r for r in rest if (r["law_name"], r["article_code"]) not in seen])[:top_k]
+        if not all_words and not significant:
+            return []
+        return _fts_search(conn, significant, all_words, top_k, doc_like)
     finally:
         conn.close()
+
+
+def _fts_search(conn: sqlite3.Connection, significant: list[str], all_words: list[str],
+                top_k: int, doc_like: list[str] | None = None) -> list[dict]:
+    results: list[dict] = []
+    if doc_like and significant:  # «по УАК» — сначала ищем внутри этого документа
+        for op in ("AND", "OR"):
+            results = _run_query(conn, _fts_query(significant, op), top_k, doc_like)
+            if results:
+                return results
+    # 1) Строгий AND по значимым словам — прицельно бьёт в нужный документ, не давая общим
+    #    словам вопроса («что», «если», «будет») размывать топ-K.
+    if significant:
+        results = _run_query(conn, _fts_query(significant, "AND"), top_k)
+    # 2) Пересечения нет — OR по значимым словам.
+    if not results and significant:
+        results = _run_query(conn, _fts_query(significant, "OR"), top_k)
+    # 3) Совсем короткий/служебный вопрос — последний шанс с исходными словами.
+    if not results and all_words:
+        results = _run_query(conn, _fts_query(all_words, "OR"), top_k)
+    if doc_like:  # пользователь назвал документ («по УАК») — его выдержки первыми
+        results.sort(key=lambda r: not any(d.lower() in r["law_name"].lower() for d in doc_like))
+    return results
 
 
 async def search_laws(question: str, top_k: int = TOP_K) -> list[dict]:
@@ -318,9 +433,12 @@ _KIND_LABEL = {"law": "Закон", "wiki": "Вики"}
 def _build_context(chunks: list[dict]) -> str:
     parts = []
     for i, c in enumerate(chunks, 1):
-        label = _KIND_LABEL.get(c.get("kind", "law"), "Закон")
+        kind = c.get("kind", "law")
+        label = _KIND_LABEL.get(kind, "Закон")
+        where = (_ref_label(c["law_name"], c["article_code"]) if kind == "law"
+                 else c["article_code"])
         parts.append(
-            f"[{i}] [{label}] {c['law_name']} — {c['article_code']}\n"
+            f"[{i}] [{label}] {c['law_name']} · {where}\n"
             f"{c['body']}\n"
             f"Источник: {c['url']}"
         )
@@ -496,6 +614,14 @@ async def prepare_context(question: str) -> tuple[list[dict], str | None]:
         return await search_laws(question, top_k=TOP_K), None
     try:
         block = events_feed.build_events_block(await events_feed.fetch_events())
+    except forum_auth.ForumAuthError as e:
+        print(f"[laws] форум требует вход: {e}")
+        block = (
+            "АКТУАЛЬНЫЕ МЕРОПРИЯТИЯ: форум gta5rp теперь доступен только после входа, а у бота нет "
+            "действующей сессии, поэтому проверить мероприятия он не может. Скажи именно это "
+            "(мероприятия на форуме могут быть, бот их просто не видит) и пришли ссылку на раздел: "
+            + events_feed.EVENTS_URL
+        )
     except Exception as e:
         print(f"[laws] не удалось прочитать раздел мероприятий: {e}")
         block = (
@@ -522,7 +648,9 @@ def _format_answer_embed(question: str, answer: str, chunks: list[dict], model: 
                 continue
             seen_urls.add(c["url"])
             icon = "🌐" if c.get("kind") == "wiki" else "⚖️"
-            lines.append(f"{icon} [{c['law_name']} — {c['article_code']}]({c['url']})")
+            title = (f"{c['law_name']} · {_ref_label(c['law_name'], c['article_code'])}"
+                     if c.get("kind") != "wiki" else f"{c['law_name']} — {c['article_code']}")
+            lines.append(f"{icon} [{title}]({c['url']})")
         if lines:
             embed.add_field(name="Источники", value="\n".join(lines), inline=False)
     if events:

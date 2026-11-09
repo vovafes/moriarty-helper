@@ -19,3 +19,4 @@ moriarty.sqlite-*
 .venv/
 ollama_keys.json
 ollama_keys.json.tmp
+forum_cookie.txt

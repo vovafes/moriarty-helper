@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3412091
 - **URL**: https://forum.gta5rp.com/threads/pravila-yezhednevnykh-pvp-sobytii-ex-voina-za-khammery.3412091/#post-10016738
-- **Скрейп**: 2026-08-30T12:09:32
+- **Скрейп**: 2026-11-09T12:22:59
 - **Чанков**: 7
 - **Длина текста**: 2017 символов
 

@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237044
 - **URL**: https://forum.gta5rp.com/threads/pravila-reidov-vnedrenii-doprosov.3237044/#post-8855838
-- **Скрейп**: 2026-08-30T12:09:45
+- **Скрейп**: 2026-11-09T12:23:12
 - **Чанков**: 40
 - **Длина текста**: 9161 символов
 

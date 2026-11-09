@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237097
 - **URL**: https://forum.gta5rp.com/threads/pravila-ogrableniya-ammunation-poyezda.3237097/#post-8855937
-- **Скрейп**: 2026-08-30T12:09:54
+- **Скрейп**: 2026-11-09T12:23:23
 - **Чанков**: 36
 - **Длина текста**: 5024 символов
 

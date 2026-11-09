@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237241
 - **URL**: https://forum.gta5rp.com/threads/kodeks-ehtiki-i-sluzhebnogo-povedenija-gosudarstvennyx-sluzhaschix.3237241/#post-8856268
-- **Скрейп**: 2026-08-30T12:08:58
+- **Скрейп**: 2026-11-09T12:22:02
 - **Чанков**: 12
 - **Длина текста**: 15143 символов
 

@@ -32,6 +32,8 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+import forum_auth
+
 DB_FILE = "laws.sqlite"
 RAW_DIR = Path("laws_raw")  # человекочитаемые .md копии, попадают в git
 FORUM_BASE = "https://forum.gta5rp.com"
@@ -70,8 +72,6 @@ THREADS = [
     (3237180, "zakon-o-ljubitelskom-i-professionalnom-rybolovstve-i-oxote", "Закон «О рыболовстве и охоте»"),
     (3237179, "zakon-o-politicheskix-partijax-v-shtate-san-andreas", "Закон «О политических партиях»"),
     (3237178, "zakon-o-jurisdikcii", "Закон «О юрисдикции»"),
-    (3237176, "zakon-o-sluzhbe-sudebnyx-marshalov-ssha-usms", "Закон «О USMS»"),
-    (3237170, "zakon-ob-upravlenii-gosudarstvennoi-sobstvennostju", "Закон «Об управлении гос. собственностью»"),
 
 ]
 
@@ -108,14 +108,9 @@ CHUNK_OVERLAP = 200
 # ──────────────────────────────────────────────────────────────
 
 def fetch(url: str, retries: int = 3) -> str:
+    """Скачивает страницу форума с куками сессии; на странице входа бросает ForumAuthError."""
     req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Encoding": "gzip",
-            "Accept-Language": "ru,en;q=0.5",
-        },
+        url, headers=forum_auth.headers({"Accept-Encoding": "gzip"}),
     )
     last_err = None
     for attempt in range(retries):
@@ -124,7 +119,21 @@ def fetch(url: str, retries: int = 3) -> str:
                 data = r.read()
                 if r.headers.get("Content-Encoding") == "gzip":
                     data = gzip.decompress(data)
-                return data.decode("utf-8", errors="replace")
+                html = data.decode("utf-8", errors="replace")
+                forum_auth.check(r.status, html, url)
+                return html
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                data = e.read()
+                if e.headers.get("Content-Encoding") == "gzip":
+                    data = gzip.decompress(data)
+                body = data.decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            forum_auth.check(e.code, body, url)  # 403 со страницей входа → ForumAuthError
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
         except (urllib.error.URLError, TimeoutError) as e:
             last_err = e
             time.sleep(1.5 * (attempt + 1))
@@ -317,7 +326,7 @@ ARTICLE_PATTERNS = [
     # «Статья 12.», «Статья 12 », «Статья 12.8»
     re.compile(r"^\s*(Статья\s+\d+(?:\.\d+)?\.?)\s", re.MULTILINE),
     # «12.8 ...», «1.1 ...» — нумерация УК
-    re.compile(r"^(\d+\.\d+)\s", re.MULTILINE),
+    re.compile(r"^(\d+\.\d+)\.?\s", re.MULTILINE),
     # «Глава I», «Глава 1»
     re.compile(r"^\s*(Глава\s+[IVXLCDM\d]+\.?)\s", re.MULTILINE),
 ]
@@ -549,12 +558,40 @@ def process_multipage_thread(conn: sqlite3.Connection, spec: dict) -> int:
     return replace_thread(conn, tid, rows)
 
 
+def _continuation_posts(url: str, html: str, min_len: int = 1000) -> list[str]:
+    """
+    Кодексы на форуме не влезают в один пост (УАК — минимум 2 поста), продолжение идёт сразу
+    следом тем же автором. Берём подряд идущие длинные посты автора первого поста; первый
+    чужой/короткий пост (реплика, «закрыто») — конец документа.
+    """
+    posts = extract_all_posts(html)
+    if not posts:
+        return []
+    author, out = posts[0]["author"], []
+    page, page_posts = 1, posts[1:]
+    max_page = extract_max_page(html)
+    while True:
+        for post in page_posts:
+            if post["author"] != author or len(post["text"]) < min_len:
+                return [clean_text(t) for t in out]
+            out.append(post["text"])
+        page += 1
+        if page > max_page:
+            return [clean_text(t) for t in out]
+        time.sleep(0.6)
+        page_posts = extract_all_posts(fetch(url + f"page-{page}"))
+
+
 def process_thread(conn: sqlite3.Connection, tid: int, slug: str, name: str) -> int:
     url = THREAD_URL.format(slug=slug, tid=tid)
     print(f"  ↻ {name}")
     print(f"    {url}")
     html = fetch(url)
     text, anchor = extract_first_post_text(html)
+    extra = _continuation_posts(url, html)
+    if extra:
+        print(f"    + продолжение документа в {len(extra)} след. постах автора")
+        text = text + "\n\n" + "\n\n".join(extra)
     print(f"    Длина текста: {len(text)} символов")
 
     chunks = split_into_chunks(text, name)
@@ -590,6 +627,15 @@ def main() -> int:
 
     conn = sqlite3.connect(DB_FILE)
     init_db(conn)
+
+    if not args.stats:
+        try:  # без входа на форум база не трогается: иначе страницы входа затрут законы
+            fetch(ROOT_FORUM_URLS[0], retries=1)
+        except forum_auth.ForumAuthError as e:
+            print(f"✗ {e}")
+            return 3
+        except Exception as e:
+            print(f"⚠ проверка доступа к форуму не удалась: {e}")
 
     if args.stats:
         rows = conn.execute(

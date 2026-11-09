@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3410053
 - **URL**: https://forum.gta5rp.com/threads/pravila-vedeniya-ugolovnykh-del-i-vnedrenii.3410053/#post-10001416
-- **Скрейп**: 2026-08-30T12:09:36
+- **Скрейп**: 2026-11-09T12:23:04
 - **Чанков**: 16
 - **Длина текста**: 4432 символов
 

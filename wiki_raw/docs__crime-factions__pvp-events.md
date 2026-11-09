@@ -1,7 +1,7 @@
 # PVP события
 
 - **URL**: https://wiki.gta5rp.com/docs/crime-factions/pvp-events
-- **Скрейп**: 2026-10-19T09:53:35
+- **Скрейп**: 2026-11-09T12:25:56
 - **Чанков**: 4
 
 ---

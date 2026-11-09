@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237239
 - **URL**: https://forum.gta5rp.com/threads/dorozhnyi-kodeks-shtata-san-andreas.3237239/#post-8856265
-- **Скрейп**: 2026-08-30T12:09:00
+- **Скрейп**: 2026-11-09T12:22:04
 - **Чанков**: 76
 - **Длина текста**: 21942 символов
 

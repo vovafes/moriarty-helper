@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3412844
 - **URL**: https://forum.gta5rp.com/threads/pravila-voiny-za-territoriyu-biznes.3412844/#post-10021852
-- **Скрейп**: 2026-08-30T12:09:34
+- **Скрейп**: 2026-11-09T12:23:01
 - **Чанков**: 16
 - **Длина текста**: 3867 символов
 

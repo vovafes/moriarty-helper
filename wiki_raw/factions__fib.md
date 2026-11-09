@@ -1,7 +1,7 @@
 # Federal Investigation Bureau
 
 - **URL**: https://wiki.gta5rp.com/factions/fib
-- **Скрейп**: 2026-10-19T09:53:55
+- **Скрейп**: 2026-11-09T12:26:16
 - **Чанков**: 12
 
 ---

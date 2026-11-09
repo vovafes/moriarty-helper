@@ -12,6 +12,7 @@
 - `update_wiki.py`: Скрипт для обновления вики wiki.gta5rp.com (таблица `wiki` в той же `laws.sqlite`, копии в `wiki_raw/`). Отдельная таблица, чтобы очистка устаревших тем в `update_laws.py` не стирала вики.
 - `llm_keys.py`: Пул ключей Ollama (`ollama_keys.json`, в .gitignore). Ключ с лимитом (429) или ошибкой (401/402/403) уходит на «отдых» и берётся следующий; ключи из `.env` (`OLLAMA_API_KEY`, `OLLAMA_API_KEYS` через запятую) тоже участвуют. В веб-панель (модуль «ИИ-ассистент», `panel_modules/assistant.py`) ключи отдаются только масками `••••abcd`; поля с `"secret": True` не попадают в журнал аудита.
 - `events_feed.py`: Живое чтение раздела форума «Мероприятия на сервере» (кэш 5 мин). Дата/время берутся из названия темы, статус — из префикса.
+- `forum_auth.py`: форум gta5rp требует вход (SSO), поэтому бот и `update_laws.py` ходят с куками залогиненной сессии: `FORUM_COOKIE=xf_user=...; xf_session=...` в `.env` (или `forum_cookie.txt`). Без них — `ForumAuthError`, бот честно говорит, что форум не видит, а `update_laws.py` не трогает базу.
 - `laws_raw/`: Папка с markdown-файлами правил сервера.
 - `data.json`, `obshak.json`, `points.json`, `chips.json`, `roulette.json`: JSON-хранилища.
 

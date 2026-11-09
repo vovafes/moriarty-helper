@@ -1,7 +1,7 @@
 # The Families
 
 - **URL**: https://wiki.gta5rp.com/factions/families
-- **Скрейп**: 2026-10-19T09:53:59
+- **Скрейп**: 2026-11-09T12:26:21
 - **Чанков**: 9
 
 ---

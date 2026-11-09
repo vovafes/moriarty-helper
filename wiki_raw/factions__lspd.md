@@ -1,7 +1,7 @@
 # Los Santos Police Department
 
 - **URL**: https://wiki.gta5rp.com/factions/lspd
-- **Скрейп**: 2026-10-19T09:53:51
+- **Скрейп**: 2026-11-09T12:26:13
 - **Чанков**: 12
 
 ---

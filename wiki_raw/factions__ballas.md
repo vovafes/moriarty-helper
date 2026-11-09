@@ -1,7 +1,7 @@
 # East Side Ballas
 
 - **URL**: https://wiki.gta5rp.com/factions/ballas
-- **Скрейп**: 2026-10-19T09:54:00
+- **Скрейп**: 2026-11-09T12:26:22
 - **Чанков**: 9
 
 ---

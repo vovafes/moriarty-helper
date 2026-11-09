@@ -1,7 +1,7 @@
 # Los Santos Customs
 
 - **URL**: https://wiki.gta5rp.com/docs/businesses/los-santos-customs
-- **Скрейп**: 2026-10-19T09:53:32
+- **Скрейп**: 2026-11-09T12:25:52
 - **Чанков**: 2
 
 ---

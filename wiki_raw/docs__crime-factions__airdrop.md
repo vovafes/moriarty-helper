@@ -1,7 +1,7 @@
 # AirDrop
 
 - **URL**: https://wiki.gta5rp.com/docs/crime-factions/airdrop
-- **Скрейп**: 2026-10-19T09:53:38
+- **Скрейп**: 2026-11-09T12:25:58
 - **Чанков**: 5
 
 ---

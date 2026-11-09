@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237086
 - **URL**: https://forum.gta5rp.com/threads/pravila-zakhvata-gosudarstvennykh-organizatsii.3237086/#post-8855925
-- **Скрейп**: 2026-08-30T12:09:58
+- **Скрейп**: 2026-11-09T12:23:28
 - **Чанков**: 9
 - **Длина текста**: 981 символов
 

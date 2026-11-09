@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3251104
 - **URL**: https://forum.gta5rp.com/threads/pravila-kazny-i-sklada-kriminal-nykh-fraktsii.3251104/#post-8904153
-- **Скрейп**: 2026-08-30T12:09:52
+- **Скрейп**: 2026-11-09T12:23:21
 - **Чанков**: 10
 - **Длина текста**: 2440 символов
 

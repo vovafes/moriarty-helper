@@ -1,7 +1,7 @@
 # National Guard
 
 - **URL**: https://wiki.gta5rp.com/factions/army
-- **Скрейп**: 2026-10-19T09:53:53
+- **Скрейп**: 2026-11-09T12:26:14
 - **Чанков**: 10
 
 ---

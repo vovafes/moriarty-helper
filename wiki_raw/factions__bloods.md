@@ -1,7 +1,7 @@
 # Bloods Street Gang
 
 - **URL**: https://wiki.gta5rp.com/factions/bloods
-- **Скрейп**: 2026-10-19T09:54:02
+- **Скрейп**: 2026-11-09T12:26:24
 - **Чанков**: 9
 
 ---

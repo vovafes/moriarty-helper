@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237188
 - **URL**: https://forum.gta5rp.com/threads/zakon-o-united-states-secret-service-usss.3237188/#post-8856161
-- **Скрейп**: 2026-08-30T12:09:11
+- **Скрейп**: 2026-11-09T12:22:18
 - **Чанков**: 27
 - **Длина текста**: 22162 символов
 

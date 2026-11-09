@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 
+import forum_auth
+
 FORUM_BASE = "https://forum.gta5rp.com"
 EVENTS_URL = FORUM_BASE + "/forums/meropriyatiya-na-servere.1693/"
 MSK = ZoneInfo("Europe/Moscow")
@@ -28,7 +30,7 @@ FETCH_TIMEOUT = 20
 _EVENTS_RE = re.compile(
     r"мероприят|(?<![а-яё])г?мп(?![а-яё])|ивент|эвент|event|афиш", re.IGNORECASE
 )
-_DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?")
+_DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{4}|\d{2})(?:\s*[-—–|,]?\s*(\d{1,2})[:.](\d{2}))?")
 
 _cache: dict = {"at": 0.0, "events": []}
 
@@ -61,6 +63,7 @@ def _parse_threads(html: str) -> list[dict]:
         m = _DATE_RE.search(title)
         if m:
             d, mo, y, hh, mm = m.groups()
+            y = y if len(y) == 4 else "20" + y
             try:
                 starts_at = datetime(int(y), int(mo), int(d), int(hh or 0), int(mm or 0), tzinfo=MSK)
             except ValueError:
@@ -70,7 +73,7 @@ def _parse_threads(html: str) -> list[dict]:
             "status": status,
             "starts_at": starts_at,
             "has_time": bool(m and m.group(4)),
-            "url": FORUM_BASE + link["href"],
+            "url": FORUM_BASE + link["href"].removesuffix("unread"),
         })
     return events
 
@@ -82,15 +85,18 @@ async def fetch_events() -> list[dict]:
 
     import aiohttp
 
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = forum_auth.headers()
     try:
         timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(EVENTS_URL) as resp:
+                html = await resp.text()
+                forum_auth.check(resp.status, html, EVENTS_URL)
                 if resp.status != 200:
                     raise RuntimeError(f"форум ответил HTTP {resp.status}")
-                html = await resp.text()
         events = _parse_threads(html)
+    except forum_auth.ForumAuthError:
+        raise  # устаревший кэш тут вреднее: бот выдал бы «мероприятий нет» вместо «нужен вход»
     except Exception:
         if _cache["events"]:
             return _cache["events"]

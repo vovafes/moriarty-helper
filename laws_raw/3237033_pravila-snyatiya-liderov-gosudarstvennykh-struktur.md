@@ -2,7 +2,7 @@
 
 - **Thread ID**: 3237033
 - **URL**: https://forum.gta5rp.com/threads/pravila-snyatiya-liderov-gosudarstvennykh-struktur.3237033/#post-8855810
-- **Скрейп**: 2026-08-30T12:09:46
+- **Скрейп**: 2026-11-09T12:23:13
 - **Чанков**: 3
 - **Длина текста**: 869 символов
 

@@ -1,7 +1,7 @@
 # Los Santos Vagos
 
 - **URL**: https://wiki.gta5rp.com/factions/vagos
-- **Скрейп**: 2026-10-19T09:54:01
+- **Скрейп**: 2026-11-09T12:26:23
 - **Чанков**: 9
 
 ---

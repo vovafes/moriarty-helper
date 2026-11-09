@@ -1,7 +1,7 @@
 # Secret Shop
 
 - **URL**: https://wiki.gta5rp.com/docs/businesses/secret-shop
-- **Скрейп**: 2026-10-19T09:53:46
+- **Скрейп**: 2026-11-09T12:26:07
 - **Чанков**: 6
 
 ---

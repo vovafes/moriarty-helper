@@ -1,7 +1,7 @@
 # Fivebets
 
 - **URL**: https://wiki.gta5rp.com/docs/phone/fivebets
-- **Скрейп**: 2026-10-19T09:53:16
+- **Скрейп**: 2026-11-09T12:25:35
 - **Чанков**: 4
 
 ---

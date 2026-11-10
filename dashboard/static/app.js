@@ -147,6 +147,7 @@ function renderNav() {
 
 function renderView() {
   const main = $("#main");
+  main.classList.toggle("wide", state.view === "overview" || state.view === "analytics");
   if (state.view === "overview") { $("#topTitle").textContent = "Обзор"; return renderOverview(main); }
   if (state.view === "members") { $("#topTitle").textContent = "Участники"; return renderMembers(main); }
   if (state.view === "audit") { $("#topTitle").textContent = "Журнал действий"; return renderAudit(main); }
@@ -558,34 +559,90 @@ function tableCard(m, t) {
 
 // ── analytics ───────────────────────────────────────────────────────────────
 
+const fmtUptime = sec => {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return d ? `${d} д ${h} ч` : h ? `${h} ч ${m} мин` : `${m} мин`;
+};
+const stat = (value, label, sub, small) => el("div", { class: "stat" },
+  el("b", { class: small ? "sm" : "" }, String(value)), el("span", {}, label), sub ? el("small", {}, sub) : null);
+
+// Bar chart with a y-axis (max / half / 0) and x labels; `keys` = one or two series per day.
+function barChart(rows, keys, label) {
+  const max = Math.max(1, ...rows.flatMap(r => keys.map(k => r[k])));
+  const total = rows.reduce((t, r) => t + keys.reduce((x, k) => x + r[k], 0), 0);
+  const names = { joined: "вошло", left: "вышло", n: "действий" };
+  const bars = rows.map(r => el("div", { class: "bar", title: `${r.day}: ` + keys.map(k => `${names[k]} ${r[k]}`).join(", ") },
+    keys.map((k, i) => el("i", { class: `${i ? "b" : ""} ${r[k] ? "" : "zero"}`, style: `height:${r[k] ? Math.max(2, r[k] / max * 100) : 1}%` }))));
+  const at = i => rows[Math.min(rows.length - 1, Math.max(0, i))]?.day || "";
+  return el("div", {},
+    el("div", { class: "chart" },
+      el("div", { class: "yaxis" }, el("span", {}, String(max)), el("span", {}, String(Math.round(max / 2))), el("span", {}, "0")),
+      el("div", { class: "plot", role: "img", "aria-label": label }, el("div", { class: "bars" }, bars)),
+      el("div", { class: "xaxis" }, el("span", {}, at(0)), rows.length > 6 ? el("span", {}, at(Math.floor(rows.length / 2))) : null, el("span", {}, at(rows.length - 1)))),
+    total ? null : el("div", { class: "chart-empty" }, "За выбранный период данных нет."));
+}
+
 async function renderAnalytics(main) {
   main.replaceChildren(el("div", { class: "empty" }, "Загрузка…"));
   let days = Number(localStorage.getItem("an_days")) || 30;
+  if (![7, 30, 90].includes(days)) days = 30;
   const draw = async () => {
     const a = await api(`${base()}/analytics?days=${days}`);
-    const max = Math.max(1, ...a.per_day.map(d => d.n));
+    const t = a.technical, mem = a.members;
     const hmax = Math.max(1, ...a.per_hour);
     const tabs = [7, 30, 90].map(d => el("button", { class: `btn sm ${d === days ? "primary" : ""}`, onclick: () => { days = d; localStorage.setItem("an_days", d); draw(); } }, `${d} дн.`));
-    const topMax = Math.max(1, ...a.top_modules.map(t => t.n));
+    const topMax = Math.max(1, ...a.top_modules.map(x => x.n));
+    const rolesMax = Math.max(1, ...mem.top_roles.map(x => x.count));
+    const hex = c => c ? "#" + c.toString(16).padStart(6, "0") : "var(--muted)";
+    const since = mem.tracked_since ? new Date(mem.tracked_since * 1000).toLocaleDateString("ru-RU") : null;
+    const tech = [
+      t.latency_ms !== null ? stat(`${t.latency_ms} мс`, "задержка бота (ping)") : null,
+      stat(fmtUptime(t.uptime_s), "аптайм бота", `с ${new Date(t.started_at * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}`),
+      t.memory_mb !== null ? stat(`${t.memory_mb} МБ`, "память процесса бота") : null,
+      stat(t.bot_guilds, "серверов у бота"),
+      stat(t.channels.total, "каналов", `${t.channels.text} текст. · ${t.channels.voice} голос. · ${t.channels.categories} катег.`),
+      stat(t.roles, "ролей"),
+      stat(t.emojis, "эмодзи", t.emoji_limit ? `лимит ${t.emoji_limit}` : null),
+      stat(t.boosts, "бустов", `уровень ${t.boost_tier}`)];
+    const people = [
+      stat(mem.total, "участников всего"),
+      mem.humans !== null ? stat(mem.humans, "людей") : null,
+      mem.bots !== null ? stat(mem.bots, "ботов") : null,
+      mem.online !== null ? stat(mem.online, "онлайн сейчас") : null,
+      ...[7, 30, 90].map(d => stat(`+${mem.joined[d]} / −${mem.left[d]}`, `вошло / вышло за ${d} дн.`, `итого ${mem.joined[d] - mem.left[d] >= 0 ? "+" : ""}${mem.joined[d] - mem.left[d]}`, true))];
     main.replaceChildren(
       el("div", { class: "head" }, el("div", {}, el("h2", {}, icon("chart", "lg"), "Аналитика"),
-        el("p", { class: "sub" }, "Изменения в панели и использование модулей за период")), el("div", { class: "actions" }, tabs)),
-      el("div", { class: "stats" },
-        el("div", { class: "stat" }, el("b", {}, String(a.total)), el("span", {}, `действий за ${days} дн.`)),
-        el("div", { class: "stat" }, el("b", {}, (a.total / days).toFixed(1)), el("span", {}, "в среднем в день")),
-        el("div", { class: "stat" }, el("b", {}, `${a.enabled}/${a.total_modules}`), el("span", {}, "модулей включено"))),
-      el("div", { class: "card" }, el("h3", { class: "group-title" }, "Активность по дням"),
-        el("div", { class: "bars", role: "img", "aria-label": "График действий по дням" }, a.per_day.map(d =>
-          el("div", { class: `bar ${d.n ? "" : "zero"}`, style: `height:${Math.max(2, d.n / max * 100)}%`, title: `${d.day}: ${d.n}` }))),
-        el("div", { class: "axis" }, el("span", {}, a.per_day[0]?.day || ""), el("span", {}, a.per_day.at(-1)?.day || ""))),
-      el("div", { class: "card" }, el("h3", { class: "group-title" }, "Пиковые часы (МСК)"),
-        el("div", { class: "hours" }, a.per_hour.map((n, h) => el("i", { style: `--v:${(n / hmax).toFixed(2)}`, title: `${String(h).padStart(2, "0")}:00 — ${n}` }))),
-        el("div", { class: "hours-axis" }, a.per_hour.map((_, h) => el("span", {}, h % 3 === 0 ? String(h).padStart(2, "0") : "")))),
+        el("p", { class: "sub" }, "Сервер, бот и участники; ниже — активность в панели")), el("div", { class: "actions" }, tabs)),
+      el("div", { class: "sec-title" }, "Сервер и бот"),
+      el("div", { class: "stats tight" }, tech),
+      el("div", { class: "sec-title" }, "Участники"),
+      el("div", { class: "stats tight" }, people),
+      el("div", { class: "sections three" },
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, `Входы и выходы за ${days} дн.`),
+          el("div", { class: "legend" }, el("span", {}, el("i"), "вошло"), el("span", {}, el("i", { class: "b" }), "вышло")),
+          barChart(mem.per_day, ["joined", "left"], "График входов и выходов участников по дням"),
+          since ? el("div", { class: "chart-empty" }, `Учёт входов и выходов ведётся с ${since}.`) : el("div", { class: "chart-empty" }, "Учёт входов и выходов начнётся с первого события.")),
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, "Топ ролей по числу участников"),
+          mem.top_roles.length ? el("div", { class: "top-list" }, mem.top_roles.map(r => el("div", { class: "top-row" },
+            el("span", {}, el("i", { class: "role-dot", style: `background:${hex(r.color)}` }), r.name),
+            el("span", { class: "track" }, el("i", { style: `width:${r.count / rolesMax * 100}%` })), el("b", {}, String(r.count)))))
+            : el("div", { class: "empty" }, "Нет данных по ролям."))),
+      el("div", { class: "sec-title" }, "Активность в панели"),
+      el("div", { class: "stats tight" },
+        stat(a.total, `действий за ${days} дн.`),
+        stat((a.total / days).toFixed(1), "в среднем в день"),
+        stat(`${a.enabled}/${a.total_modules}`, "модулей включено")),
+      el("div", { class: "sections three" },
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, "Действия по дням"),
+          barChart(a.per_day.map(d => ({ day: d.day, n: d.n })), ["n"], "График действий по дням")),
+        el("div", { class: "card" }, el("h3", { class: "group-title" }, "Пиковые часы (МСК)"),
+          el("div", { class: "hours" }, a.per_hour.map((n, h) => el("i", { style: `--v:${(n / hmax).toFixed(2)}`, title: `${String(h).padStart(2, "0")}:00 — ${n}` }))),
+          el("div", { class: "hours-axis" }, a.per_hour.map((_, h) => el("span", {}, h % 3 === 0 ? String(h).padStart(2, "0") : ""))))),
       el("div", { class: "sections" },
         el("div", { class: "card" }, el("h3", { class: "group-title" }, "Самые используемые модули"),
-          a.top_modules.length ? el("div", { class: "top-list" }, a.top_modules.map(t => el("div", { class: "top-row" },
-            el("span", {}, state.modules.find(m => m.key === t.module)?.title || t.module || "—"),
-            el("span", { class: "track" }, el("i", { style: `width:${t.n / topMax * 100}%` })), el("b", {}, String(t.n)))))
+          a.top_modules.length ? el("div", { class: "top-list" }, a.top_modules.map(x => el("div", { class: "top-row" },
+            el("span", {}, state.modules.find(m => m.key === x.module)?.title || x.module || "—"),
+            el("span", { class: "track" }, el("i", { style: `width:${x.n / topMax * 100}%` })), el("b", {}, String(x.n)))))
             : el("div", { class: "empty" }, "За период модули не менялись.")),
         el("div", { class: "card" }, el("h3", { class: "group-title" }, "Статус модулей"),
           a.categories.map(c => el("div", { class: "cat-row" }, el("span", {}, CATEGORY_TITLES[c.category] || c.category), el("b", {}, `${c.enabled}/${c.total}`))))));

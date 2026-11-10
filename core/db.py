@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
     details   TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_guild_ts ON audit_log (guild_id, ts DESC);
+CREATE TABLE IF NOT EXISTS member_events (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    kind     TEXT    NOT NULL,
+    is_bot   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS member_events_guild_ts ON member_events (guild_id, ts DESC);
 CREATE TABLE IF NOT EXISTS panel_sessions (
     token_hash TEXT PRIMARY KEY,
     created    INTEGER NOT NULL,

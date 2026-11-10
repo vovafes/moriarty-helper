@@ -273,6 +273,104 @@ async def api_overview(request):
     })
 
 
+_STARTED_FALLBACK = time.time()
+
+
+def _process_start() -> float:
+    """Unix start time of this process (from /proc, falls back to server import time)."""
+    try:
+        with open("/proc/self/stat") as f:
+            start_ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/stat") as f:
+            btime = next(int(l.split()[1]) for l in f if l.startswith("btime"))
+        return btime + start_ticks / os.sysconf("SC_CLK_TCK")
+    except Exception:
+        return _STARTED_FALLBACK
+
+
+def _memory_mb() -> float | None:
+    """Resident memory of the bot process in MiB (no psutil: /proc, then resource)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+    try:
+        import resource
+        import sys
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
+    except Exception:
+        return None
+
+
+def _technical(bot, guild) -> dict:
+    import platform
+    import discord
+    lat = getattr(bot, "latency", None)
+    lat_ms = round(lat * 1000) if isinstance(lat, (int, float)) and lat == lat and lat not in (float("inf"), float("-inf")) else None
+    started = _process_start()
+    chans = list(getattr(guild, "channels", []) or [])
+    kinds = [getattr(getattr(c, "type", None), "name", "") for c in chans]
+    return {
+        "latency_ms": lat_ms,
+        "uptime_s": max(0, int(time.time() - started)),
+        "started_at": int(started),
+        "memory_mb": _memory_mb(),
+        "bot_guilds": len(getattr(bot, "guilds", []) or []),
+        "channels": {"total": len(chans), "text": sum(k in ("text", "news", "forum") for k in kinds),
+                     "voice": sum(k in ("voice", "stage_voice") for k in kinds),
+                     "categories": len(getattr(guild, "categories", []) or [])},
+        "roles": len(getattr(guild, "roles", []) or []),
+        "emojis": len(getattr(guild, "emojis", []) or []),
+        "emoji_limit": getattr(guild, "emoji_limit", None),
+        "boosts": getattr(guild, "premium_subscription_count", 0) or 0,
+        "boost_tier": getattr(guild, "premium_tier", 0) or 0,
+        "python": platform.python_version(),
+        "discord_py": discord.__version__,
+    }
+
+
+def _members_stats(bot, guild, days: int, now: int) -> dict:
+    members = list(getattr(guild, "members", []) or [])
+    total = getattr(guild, "member_count", None) or len(members)
+    bots = sum(1 for m in members if m.bot)
+    complete = len(members) >= total * 0.98          # cache may be partial without the members intent
+    online = None
+    if getattr(getattr(bot, "intents", None), "presences", False) and members:
+        online = sum(1 for m in members if str(getattr(m, "status", "offline")) != "offline")
+    role_counts = [(r, len(getattr(r, "members", []) or [])) for r in guild.roles if not r.is_default() and not r.managed]
+    role_counts = [rc for rc in role_counts if rc[1] > 0]
+    role_counts.sort(key=lambda rc: -rc[1])
+    top_roles = [{"id": r.id, "name": r.name, "color": getattr(r.color, "value", 0), "count": n} for r, n in role_counts[:10]]
+    rows = db.query("SELECT ts, kind, is_bot FROM member_events WHERE guild_id=? AND ts>=?", (guild.id, now - 90 * 86400))
+    first = db.query("SELECT MIN(ts) AS t FROM member_events WHERE guild_id=?", (guild.id,))
+    msk = 3 * 3600
+    joined = {"7": 0, "30": 0, "90": 0}
+    left = {"7": 0, "30": 0, "90": 0}
+    per_day: dict[str, list[int]] = {}
+    for i in range(days - 1, -1, -1):
+        per_day[time.strftime("%d.%m", time.gmtime(now - i * 86400 + msk))] = [0, 0]
+    for r in rows:
+        tgt = joined if r["kind"] == "join" else left
+        for d in (7, 30, 90):
+            if r["ts"] >= now - d * 86400:
+                tgt[str(d)] += 1
+        key = time.strftime("%d.%m", time.gmtime(r["ts"] + msk))
+        if key in per_day and r["ts"] >= now - days * 86400:
+            per_day[key][0 if r["kind"] == "join" else 1] += 1
+    return {
+        "total": total, "humans": (total - bots) if complete else None, "bots": bots if complete else None,
+        "online": online if complete else None,
+        "joined": joined, "left": left,
+        "tracked_since": first[0]["t"] if first and first[0]["t"] else None,
+        "per_day": [{"day": d, "joined": v[0], "left": v[1]} for d, v in per_day.items()],
+        "top_roles": top_roles,
+    }
+
+
 async def api_analytics(request):
     """Panel activity from the audit log: per day, per hour of day (MSK), top modules, enabled modules by category."""
     _, guild = _guild_for(request)
@@ -304,7 +402,10 @@ async def api_analytics(request):
         c = cats.setdefault(m.category, [0, 0])
         c[0] += bool(on)
         c[1] += 1
+    technical = _technical(request.app["bot"], guild)
+    members = await db.run(_members_stats, request.app["bot"], guild, days, now)
     return web.json_response({
+        "technical": technical, "members": members,
         "days": days, "total": len(rows), "enabled": enabled, "total_modules": len(modules.REGISTRY),
         "per_day": [{"day": d, "n": n} for d, n in per_day.items()], "per_hour": per_hour,
         "top_modules": [{"module": k, "n": n} for k, n in sorted(by_module.items(), key=lambda kv: -kv[1])[:8]],

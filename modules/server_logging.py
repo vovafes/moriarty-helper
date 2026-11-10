@@ -6,11 +6,12 @@ logs in main.py (tickets, shop, warns, ...) -- those are unchanged.
 """
 
 import datetime
+import time
 
 import discord
 from discord.ext import commands
 
-from core import embeds, modules
+from core import db, embeds, modules
 
 GREEN, RED, YELLOW, BLUE, GREY = 0x3BA55D, 0xED4245, 0xFEE75C, 0x5865F2, 0x99AAB5
 
@@ -134,6 +135,22 @@ class ServerLogging(commands.Cog):
         await self._send(after.guild, "log_message_edit", e)
 
     # ── members ─────────────────────────────────────────────────────────────
+    @commands.Cog.listener("on_member_join")
+    async def _count_join(self, member: discord.Member):
+        """Light join/leave counter for the panel's analytics (independent of the log settings)."""
+        await self._count_member(member, "join")
+
+    @commands.Cog.listener("on_member_remove")
+    async def _count_leave(self, member: discord.Member):
+        await self._count_member(member, "leave")
+
+    async def _count_member(self, member: discord.Member, kind: str) -> None:
+        try:
+            await db.run(db.execute, "INSERT INTO member_events (ts, guild_id, user_id, kind, is_bot) VALUES (?,?,?,?,?)",
+                         (int(time.time()), member.guild.id, member.id, kind, int(bool(member.bot))))
+        except Exception as e:      # statistics must never break the log
+            print(f"member_events: {e}")
+
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         e = embeds.make("📥 Участник зашёл", _fmt_user(member), GREEN)

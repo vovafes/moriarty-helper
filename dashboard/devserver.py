@@ -48,12 +48,17 @@ def _fake_bot():
                NS(id=8, name="Администратор", color=NS(value=0xED4245), managed=False, position=9, is_default=lambda: False),
                NS(id=9, name="Участник", color=NS(value=0x5865F2), managed=False, position=1, is_default=lambda: False)],
     )
-    guild.members = []
+    mk = lambda i, bot, st, rids: NS(id=i, bot=bot, status=st, roles=rids)
+    guild.members = [mk(i, i % 9 == 0, "online" if i % 3 == 0 else "offline", []) for i in range(1, 129)]
+    for r in guild.roles:
+        r.members = [m for m in guild.members if (m.id + r.id) % {7: 9, 8: 40, 9: 2}.get(r.id, 10 ** 6) == 0]
+    guild.emojis, guild.premium_subscription_count, guild.premium_tier, guild.emoji_limit = [1] * 12, 9, 2, 150
     people = {1001: "Алексей", 1002: "Мария", 1: "Demo Admin"}
     guild.get_member = lambda i: NS(id=i, display_name=people[i]) if i in people else None
     guild.get_role = lambda i: next((r for r in guild.roles if r.id == i), None)
     guild.get_channel = lambda i: next((c for c in guild.channels if c.id == i), None)
-    return NS(get_guild=lambda i: guild if i == GID else None, guilds=[guild])
+    return NS(get_guild=lambda i: guild if i == GID else None, guilds=[guild], latency=0.042,
+              intents=NS(presences=True, members=True))
 
 
 async def main():
@@ -67,6 +72,16 @@ async def main():
     moderation.add_case(GID, "mute", U(id=11, name="spammer#1234"), U(id=1, name="Demo Admin"), "Спам в общем чате", 3600)
     moderation.add_case(GID, "automod", U(id=12, name="linker#4321"), U(id=99, name="Moriarty"), "Приглашение на другой сервер")
     moderation.add_case(GID, "ban", U(id=13, name="raider#0001"), U(id=1, name="Demo Admin"), "Рейд")
+
+    import random, time
+    rnd = random.Random(1)
+    for _ in range(70):
+        ts = int(time.time()) - rnd.randint(0, 40 * 86400)
+        db.execute("INSERT INTO member_events (ts, guild_id, user_id, kind, is_bot) VALUES (?,?,?,?,?)",
+                   (ts, GID, rnd.randint(2000, 9000), rnd.choice(["join", "join", "leave"]), 0))
+    for _ in range(60):
+        db.execute("INSERT INTO audit_log (ts, guild_id, user_id, user_name, module, action) VALUES (?,?,?,?,?,?)",
+                   (int(time.time()) - rnd.randint(0, 30 * 86400), GID, 1, "Demo Admin", rnd.choice(["logging", "welcome", "moderation"]), "config_update"))
 
     # legacy demo data so the economy/warns/shop pages aren't empty
     legacy_state.points_db[GID] = {1001: 1250, 1002: 480}

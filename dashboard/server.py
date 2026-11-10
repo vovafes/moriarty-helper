@@ -13,6 +13,7 @@ Env:
   DASHBOARD_URL            public base URL, e.g. https://bot.example.com  (redirect = <url>/auth/callback)
   DASHBOARD_OWNER_IDS      comma-separated user ids that can manage every guild the bot is in
   DASHBOARD_ALLOW_MANAGE_GUILD   1 = also let members with "Manage Server" in (default: Administrators only)
+  HOST                     listen address (default 0.0.0.0; set 127.0.0.1 behind a reverse proxy)
   PORT                     listen port (default 10000, what the old health server used)
 """
 
@@ -527,9 +528,10 @@ async def start(bot) -> None:
     db.init()
     _runner = web.AppRunner(create_app(bot))
     await _runner.setup()
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", 10000))
-    await web.TCPSite(_runner, "0.0.0.0", port).start()
-    print(f"Dashboard: listening on :{port}")
+    await web.TCPSite(_runner, host, port).start()
+    print(f"Dashboard: listening on {host}:{port}")
 
 
 async def stop() -> None:
